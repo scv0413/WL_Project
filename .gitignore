@@ -1,0 +1,25 @@
+# macOS and editors
+.DS_Store
+.idea/
+.vscode/
+
+# Python and notebooks
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local uv cache override
+.uv-cache/
+
+# Private or generated project data
+data/
+artifacts/
+
+# Model and export artifacts
+*.pt
+*.pth
+*.onnx

@@ -1,0 +1,9 @@
+pyproject.toml
+src/snatch_analysis/__init__.py
+src/snatch_analysis/metadata.py
+src/snatch_analysis.egg-info/PKG-INFO
+src/snatch_analysis.egg-info/SOURCES.txt
+src/snatch_analysis.egg-info/dependency_links.txt
+src/snatch_analysis.egg-info/requires.txt
+src/snatch_analysis.egg-info/top_level.txt
+tests/test_metadata.py
