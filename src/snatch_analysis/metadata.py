@@ -3,8 +3,9 @@
 from pathlib import Path
 import re
 
-import cv2
 import pandas as pd
+
+from snatch_analysis.video import read_video_properties
 
 
 _FILENAME_PATTERN = re.compile(
@@ -85,34 +86,4 @@ def _build_manifest_row(video_path: Path) -> dict[str, object]:
         "has_plate": "unknown",
         "camera_motion": "unknown",
     }
-    return {**row, **_read_video_properties(video_path)}
-
-
-def _read_video_properties(video_path: Path) -> dict[str, object]:
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        return {
-            "fps": None,
-            "frame_count": None,
-            "duration_sec": None,
-            "width": None,
-            "height": None,
-            "read_status": "error",
-        }
-
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    capture.release()
-
-    duration_sec = frame_count / fps if fps > 0 else None
-    return {
-        "fps": round(fps, 6),
-        "frame_count": frame_count,
-        "duration_sec": round(duration_sec, 6) if duration_sec is not None else None,
-        "width": width,
-        "height": height,
-        "read_status": "ok",
-    }
+    return {**row, **read_video_properties(video_path)}
