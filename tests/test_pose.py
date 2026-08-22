@@ -92,7 +92,11 @@ class PoseTests(unittest.TestCase):
             "MANUAL_OVERRIDE_CANDIDATE_ID = None",
             source_by_id["primary-settings"],
         )
-        self.assertIn("BODY_SIDE = None", source_by_id["body-side-setting"])
+        self.assertIn("visible_body_side", source_by_id["body-side-setting"])
+        self.assertIn(
+            "BODY_SIDE = labeled_body_side",
+            source_by_id["body-side-setting"],
+        )
         self.assertIn("phase_events", source_by_id["primary-track-review"])
         self.assertIn("motion_score", source_by_id["primary-track-review"])
         self.assertIn(
@@ -121,6 +125,79 @@ class PoseTests(unittest.TestCase):
         self.assertTrue(
             all(cell["execution_count"] is None and cell["outputs"] == [] for cell in code_cells)
         )
+
+    def test_body_side_cell_reloads_current_manifest_label(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        body_side_source = next(
+            "".join(cell["source"])
+            for cell in notebook["cells"]
+            if cell.get("id") == "body-side-setting"
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            manifest_path = Path(temporary_directory) / "videos.csv"
+            pd.DataFrame(
+                {
+                    "video_id": ["b00_sn_f_01"],
+                    "visible_body_side": ["right"],
+                }
+            ).to_csv(manifest_path, index=False)
+            namespace = {
+                "pd": pd,
+                "MANIFEST_PATH": manifest_path,
+                "VIDEO_ID": "b00_sn_f_01",
+                "selected_video": pd.Series({"visible_body_side": "left"}),
+            }
+
+            exec(compile(body_side_source, "body-side-setting", "exec"), namespace)
+
+            self.assertEqual(namespace["BODY_SIDE"], "right")
+
+    def test_unlabelled_body_side_removes_stale_angle_output(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        angle_source = next(
+            "".join(cell["source"])
+            for cell in notebook["cells"]
+            if cell.get("id") == "joint-angle-save"
+        )
+        run_summary = {"pose_selection": {"body_side": "left"}}
+
+        def load_run_summary():
+            return dict(run_summary)
+
+        def save_run_summary(summary):
+            run_summary.clear()
+            run_summary.update(summary)
+
+        with TemporaryDirectory() as temporary_directory:
+            angle_path = Path(temporary_directory) / "joint_angles.csv"
+            pose_path = Path(temporary_directory) / "pose_keypoints.csv"
+            angle_path.write_text("stale angles", encoding="utf-8")
+            namespace = {
+                "pd": pd,
+                "pose_keypoints_preview": pd.DataFrame({"frame_index": [0]}),
+                "BODY_SIDE": None,
+                "POSE_KEYPOINT_PATH": pose_path,
+                "JOINT_ANGLE_PATH": angle_path,
+                "load_run_summary": load_run_summary,
+                "save_run_summary": save_run_summary,
+                "calculate_joint_angles": lambda *_: self.fail(
+                    "Unlabelled side must not calculate angles"
+                ),
+            }
+
+            exec(compile(angle_source, "joint-angle-save", "exec"), namespace)
+
+            self.assertFalse(angle_path.exists())
+            self.assertNotIn("body_side", run_summary["pose_selection"])
+            self.assertEqual(
+                run_summary["pose_selection"]["angle_status"],
+                "not_run",
+            )
 
     def test_converts_every_pose_candidate_and_joint_to_long_rows(self) -> None:
         candidates = candidates_for_frame(

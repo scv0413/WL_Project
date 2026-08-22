@@ -30,6 +30,7 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
             manifest = pd.read_csv(manifest_path)
             manifest.loc[0, "has_plate"] = "yes"
             manifest.loc[0, "camera_motion"] = "fixed"
+            manifest.loc[0, "visible_body_side"] = "left"
             manifest.to_csv(manifest_path, index=False)
 
             self._execute_notebook(run_root)
@@ -37,6 +38,29 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
 
             self.assertEqual(reloaded_manifest.loc[0, "has_plate"], "yes")
             self.assertEqual(reloaded_manifest.loc[0, "camera_motion"], "fixed")
+            self.assertEqual(reloaded_manifest.loc[0, "visible_body_side"], "left")
+
+    def test_applies_visible_body_side_labels_from_labeling_cell(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            run_root = Path(temporary_directory)
+            (run_root / "pyproject.toml").touch()
+            video_directory = run_root / "data" / "raw" / "videos"
+            video_directory.mkdir(parents=True)
+            self._write_test_video(video_directory / "b00_sn_f_01.mp4")
+            notebook = nbformat.read(NOTEBOOK_PATH, as_version=4)
+            label_cell = next(
+                cell
+                for cell in notebook.cells
+                if cell.get("id") == "visible-body-side-labels"
+            )
+            label_cell.source = (
+                'VISIBLE_BODY_SIDE_LABELS = {"b00_sn_f_01": "right"}'
+            )
+
+            self._execute_notebook(run_root, notebook)
+            manifest = pd.read_csv(run_root / "data" / "metadata" / "videos.csv")
+
+            self.assertEqual(manifest.loc[0, "visible_body_side"], "right")
 
     def test_u2_summary_exposes_the_video_frame_contract(self) -> None:
         with TemporaryDirectory() as temporary_directory:
