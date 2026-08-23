@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import unittest
 
 import cv2
@@ -7,11 +8,17 @@ import numpy as np
 import pandas as pd
 
 from snatch_analysis.plate import (
+    PLATE_CANDIDATE_COLUMNS,
+    PLATE_TRACK_COLUMNS,
     SAMPLE_PHASES,
     opencv_bbox_to_yolo,
+    plate_result_to_candidates,
     sample_phase_frames,
+    save_plate_candidate_cache,
     save_plate_image,
+    save_plate_track,
     save_yolo_plate_label,
+    select_primary_plate_track,
     yolo_bbox_to_opencv,
 )
 
@@ -168,6 +175,334 @@ class PlateBoundingBoxTests(unittest.TestCase):
                 label_path.read_text(encoding="utf-8"),
                 original_label,
             )
+
+
+class _FakeBoxes:
+    def __init__(self, xyxy: np.ndarray, confidence: np.ndarray) -> None:
+        self.xyxy = xyxy
+        self.conf = confidence
+
+
+class _FakeResult:
+    def __init__(self, xyxy: np.ndarray, confidence: np.ndarray) -> None:
+        self.boxes = _FakeBoxes(xyxy, confidence)
+
+
+def _plate_candidates(rows: list[dict[str, float | int | str]]) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=PLATE_CANDIDATE_COLUMNS)
+
+
+class PlateTrackingTests(unittest.TestCase):
+    def test_tracking_accepts_object_typed_numeric_candidates_from_empty_frame_concat(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 40.0, "bbox_y1": 50.0, "bbox_x2": 60.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 50.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.5, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 0,
+                    "bbox_x1": 42.0, "bbox_y1": 50.0, "bbox_x2": 62.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.8,
+                    "center_x_px": 52.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.52, "center_y_normalized": 0.6,
+                },
+            ]
+        ).astype(object)
+
+        track = select_primary_plate_track(
+            candidates,
+            frame_count=2,
+            initial_frame_index=0,
+            initial_candidate_id=0,
+        )
+
+        self.assertEqual(track["status"].tolist(), ["ok", "ok"])
+
+    def test_rejects_primary_plate_confirmation_outside_first_candidate_frame(self) -> None:
+        first_frame = plate_result_to_candidates(
+            _FakeResult(np.array([[10.0, 20.0, 30.0, 40.0]]), np.array([0.8])),
+            "b00_sn_f_01", frame_index=0, timestamp_seconds=0.0,
+            image_width=100, image_height=50,
+        )
+        later_frame = plate_result_to_candidates(
+            _FakeResult(np.array([[11.0, 20.0, 31.0, 40.0]]), np.array([0.8])),
+            "b00_sn_f_01", frame_index=1, timestamp_seconds=0.1,
+            image_width=100, image_height=50,
+        )
+
+        with self.assertRaisesRegex(ValueError, "first candidate frame"):
+            select_primary_plate_track(
+                pd.concat([first_frame, later_frame], ignore_index=True),
+                frame_count=2, initial_frame_index=1, initial_candidate_id=0,
+            )
+
+    def test_keeps_lifting_plate_when_candidate_id_changes(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 4,
+                    "bbox_x1": 40.0, "bbox_y1": 50.0, "bbox_x2": 60.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 50.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.5, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 0,
+                    "bbox_x1": 43.0, "bbox_y1": 52.0, "bbox_x2": 63.0,
+                    "bbox_y2": 72.0, "bbox_confidence": 0.8,
+                    "center_x_px": 53.0, "center_y_px": 62.0,
+                    "center_x_normalized": 0.53, "center_y_normalized": 0.62,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 8,
+                    "bbox_x1": 80.0, "bbox_y1": 50.0, "bbox_x2": 100.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.95,
+                    "center_x_px": 90.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.9, "center_y_normalized": 0.6,
+                },
+            ]
+        )
+        lifter_centers = pd.DataFrame(
+            {"frame_index": [0, 1], "center_x_px": [50.0, 54.0], "center_y_px": [60.0, 62.0]}
+        )
+
+        track = select_primary_plate_track(
+            candidates, frame_count=2, initial_frame_index=0,
+            initial_candidate_id=4, lifter_centers=lifter_centers,
+        )
+
+        self.assertEqual(track["candidate_id"].tolist(), [4, 0])
+        self.assertEqual(track["status"].tolist(), ["ok", "ok"])
+
+    def test_records_missing_frame_without_interpolating_coordinates(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 40.0, "bbox_y1": 50.0, "bbox_x2": 60.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 50.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.5, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 2,
+                    "timestamp_seconds": 0.2, "candidate_id": 3,
+                    "bbox_x1": 44.0, "bbox_y1": 50.0, "bbox_x2": 64.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 54.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.54, "center_y_normalized": 0.6,
+                },
+            ]
+        )
+
+        track = select_primary_plate_track(
+            candidates, frame_count=3, initial_frame_index=0, initial_candidate_id=0,
+        )
+
+        missing = track.iloc[1]
+        self.assertEqual(missing["status"], "missing")
+        self.assertEqual(missing["reason"], "no_detection")
+        self.assertTrue(pd.isna(missing["center_x_px"]))
+        self.assertEqual(float(track.iloc[2]["center_x_px"]), 54.0)
+
+    def test_stops_track_when_continuity_costs_are_ambiguous(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 40.0, "bbox_y1": 50.0, "bbox_x2": 60.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 50.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.5, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 1,
+                    "bbox_x1": 42.0, "bbox_y1": 50.0, "bbox_x2": 62.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 52.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.52, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 2,
+                    "bbox_x1": 42.4, "bbox_y1": 50.0, "bbox_x2": 62.4,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 52.4, "center_y_px": 60.0,
+                    "center_x_normalized": 0.524, "center_y_normalized": 0.6,
+                },
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 2,
+                    "timestamp_seconds": 0.2, "candidate_id": 3,
+                    "bbox_x1": 44.0, "bbox_y1": 50.0, "bbox_x2": 64.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 54.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.54, "center_y_normalized": 0.6,
+                },
+            ]
+        )
+
+        track = select_primary_plate_track(
+            candidates, frame_count=3, initial_frame_index=0, initial_candidate_id=0,
+            continuity_ambiguity_margin=0.05,
+        )
+
+        self.assertEqual(track.loc[1, "status"], "confirmation_required")
+        self.assertEqual(track.loc[1, "reason"], "ambiguous_candidates")
+        self.assertEqual(track.loc[2, "reason"], "tracking_stopped_after_ambiguity")
+
+    def test_rejects_duplicate_candidate_and_track_keys_before_saving(self) -> None:
+        duplicate_candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "b00_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 40.0, "bbox_y1": 50.0, "bbox_x2": 60.0,
+                    "bbox_y2": 70.0, "bbox_confidence": 0.9,
+                    "center_x_px": 50.0, "center_y_px": 60.0,
+                    "center_x_normalized": 0.5, "center_y_normalized": 0.6,
+                }
+            ] * 2
+        )
+        duplicate_track = pd.DataFrame(
+            [
+                {
+                    column: "b00_sn_f_01" if column == "video_id" else 0
+                    if column == "frame_index" else np.nan
+                    for column in PLATE_TRACK_COLUMNS
+                },
+                {
+                    column: "b00_sn_f_01" if column == "video_id" else 0
+                    if column == "frame_index" else np.nan
+                    for column in PLATE_TRACK_COLUMNS
+                },
+            ],
+            columns=PLATE_TRACK_COLUMNS,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                save_plate_candidate_cache(
+                    duplicate_candidates, Path(temporary_directory) / "candidates.csv"
+                )
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                save_plate_track(
+                    duplicate_track, Path(temporary_directory) / "track.csv"
+                )
+
+    def test_converts_every_detection_bbox_to_pixel_and_normalized_centers(self) -> None:
+        result = _FakeResult(
+            np.array([[10.0, 20.0, 30.0, 40.0], [40.0, 10.0, 80.0, 30.0]]),
+            np.array([0.8, 0.7]),
+        )
+
+        candidates = plate_result_to_candidates(
+            result, "b00_sn_f_01", frame_index=3, timestamp_seconds=0.1,
+            image_width=100, image_height=50,
+        )
+
+        self.assertEqual(candidates["candidate_id"].tolist(), [0, 1])
+        self.assertEqual(candidates["center_x_px"].tolist(), [20.0, 60.0])
+        self.assertEqual(candidates["center_y_px"].tolist(), [30.0, 20.0])
+        self.assertEqual(candidates["center_x_normalized"].tolist(), [0.2, 0.6])
+        self.assertEqual(candidates["center_y_normalized"].tolist(), [0.6, 0.4])
+
+
+class PlateNotebookSourceContractTests(unittest.TestCase):
+    def test_training_uses_absolute_project_directory_to_reuse_saved_weight(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source_by_id = {
+            cell.get("id"): "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        }
+
+        self.assertIn(
+            "project=str(PLATE_RUN_DIRECTORY.parent.resolve())",
+            source_by_id.get("u7-train", ""),
+        )
+
+    def test_reuse_preserves_recorded_training_time(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source_by_id = {
+            cell.get("id"): "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        }
+
+        inference = source_by_id.get("u7-candidates", "")
+        self.assertIn("recorded_training_seconds", inference)
+        self.assertIn('run_summary.get("plate", {}).get("training_seconds"', inference)
+
+    def test_phase_review_prefers_frames_with_candidates(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source_by_id = {
+            cell.get("id"): "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        }
+
+        preview = source_by_id.get("u7-preview", "")
+        self.assertIn("detected_phase_frames", preview)
+        self.assertIn("phase_by_frame", preview)
+        self.assertIn("len(detected_phase_frames) // 2", preview)
+
+    def test_safe_load_precedes_ultralytics_import_and_uses_pose_artifact(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source = "\n".join(
+            "".join(cell.get("source", [])) for cell in notebook["cells"]
+        )
+
+        self.assertLess(
+            source.index("verify_ultralytics_safe_load()"),
+            source.index("from ultralytics import YOLO"),
+        )
+        self.assertIn('"pose_keypoints.csv"', source)
+        self.assertNotIn("selected_pose_keypoints.csv", source)
+
+    def test_notebook_has_post_confirmation_selected_track_review(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source_by_id = {
+            cell.get("id"): "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        }
+
+        review = source_by_id.get("u7-selected-track-review", "")
+        self.assertIn("plate_track", review)
+        self.assertIn("BACKGROUND_PLATE_MISSELECTION_FRAMES", review)
+        self.assertIn("candidate.status == 'ok'", review)
+        self.assertIn("candidate.reason", review)
+
+    def test_notebook_decodes_review_frames_once_into_bounded_cache(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")
+        )
+        source = "\n".join(
+            "".join(cell.get("source", [])) for cell in notebook["cells"]
+        )
+
+        self.assertIn("review_frame_indices", source)
+        self.assertIn("len(review_frame_indices) > 6", source)
+        self.assertIn("review_frames[review_frame_index].copy()", source)
+        self.assertNotIn("read_video_frame(", source)
 
 
 if __name__ == "__main__":

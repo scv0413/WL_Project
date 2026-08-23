@@ -4,10 +4,13 @@ from numbers import Integral, Real
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 import math
+from typing import Any
 
 import cv2
 import numpy as np
 import pandas as pd
+
+from snatch_analysis.pose import _to_numpy, _write_csv_atomically
 
 
 SAMPLE_PHASES = (
@@ -26,6 +29,22 @@ _SAMPLE_COLUMNS = (
     "sampling_phase",
     "setup_reference_override",
 )
+PLATE_CANDIDATE_COLUMNS = (
+    "video_id",
+    "frame_index",
+    "timestamp_seconds",
+    "candidate_id",
+    "bbox_x1",
+    "bbox_y1",
+    "bbox_x2",
+    "bbox_y2",
+    "bbox_confidence",
+    "center_x_px",
+    "center_y_px",
+    "center_x_normalized",
+    "center_y_normalized",
+)
+PLATE_TRACK_COLUMNS = (*PLATE_CANDIDATE_COLUMNS, "status", "reason")
 
 
 def sample_phase_frames(
@@ -235,6 +254,271 @@ def save_yolo_plate_label(
     finally:
         temporary_path.unlink(missing_ok=True)
     return action
+
+
+def plate_result_to_candidates(
+    result: Any,
+    video_id: str,
+    frame_index: int,
+    timestamp_seconds: float,
+    *,
+    image_width: int,
+    image_height: int,
+) -> pd.DataFrame:
+    """한 frame의 Detection bbox 전체를 원판 후보 표로 변환한다."""
+    _validate_image_size(image_width, image_height)
+    if result.boxes is None:
+        return pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS)
+
+    boxes = _to_numpy(result.boxes.xyxy)
+    confidences = _to_numpy(result.boxes.conf)
+    if len(boxes) != len(confidences):
+        raise ValueError("plate bbox와 confidence 후보 수가 일치하지 않습니다.")
+
+    rows = []
+    for candidate_id, (bbox, confidence) in enumerate(
+        zip(boxes, confidences, strict=True)
+    ):
+        if len(bbox) != 4:
+            raise ValueError("plate bbox는 네 좌표여야 합니다.")
+        x1, y1, x2, y2 = map(float, bbox)
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+        rows.append(
+            {
+                "video_id": str(video_id),
+                "frame_index": int(frame_index),
+                "timestamp_seconds": float(timestamp_seconds),
+                "candidate_id": candidate_id,
+                "bbox_x1": x1,
+                "bbox_y1": y1,
+                "bbox_x2": x2,
+                "bbox_y2": y2,
+                "bbox_confidence": float(confidence),
+                "center_x_px": center_x,
+                "center_y_px": center_y,
+                "center_x_normalized": center_x / image_width,
+                "center_y_normalized": center_y / image_height,
+            }
+        )
+    return pd.DataFrame(rows, columns=PLATE_CANDIDATE_COLUMNS)
+
+
+def save_plate_candidate_cache(
+    candidates: pd.DataFrame,
+    output_path: str | Path,
+) -> None:
+    """후보 복합키가 고유한 경우에만 전체 원판 후보를 저장한다."""
+    _validate_plate_table(candidates, PLATE_CANDIDATE_COLUMNS, "후보")
+    _write_csv_atomically(candidates, output_path)
+
+
+def save_plate_track(
+    track: pd.DataFrame,
+    output_path: str | Path,
+) -> None:
+    """frame당 한 행인 원판 track만 저장한다."""
+    _validate_plate_table(track, PLATE_TRACK_COLUMNS, "track")
+    _write_csv_atomically(track, output_path)
+
+
+def select_primary_plate_track(
+    candidates: pd.DataFrame,
+    *,
+    frame_count: int,
+    initial_frame_index: int,
+    initial_candidate_id: int,
+    lifter_centers: pd.DataFrame | None = None,
+    fps: float | None = None,
+    max_center_shift: float = 4.0,
+    max_area_log_change: float = 1.0,
+    continuity_ambiguity_margin: float = 0.05,
+) -> pd.DataFrame:
+    """확정된 원판에서 중심·크기·선수 근접도로 다음 후보를 고른다."""
+    if frame_count <= 0:
+        raise ValueError("frame_count는 양수여야 합니다.")
+    if not 0 <= initial_frame_index < frame_count:
+        raise ValueError("initial_frame_index가 frame 범위를 벗어났습니다.")
+    _validate_plate_table(candidates, PLATE_CANDIDATE_COLUMNS, "후보")
+    first_candidate_frame = int(candidates["frame_index"].min())
+    if initial_frame_index != first_candidate_frame:
+        raise ValueError("초기 원판 확인은 first candidate frame과 일치해야 합니다.")
+
+    initial = candidates.loc[
+        (candidates["frame_index"] == initial_frame_index)
+        & (candidates["candidate_id"] == initial_candidate_id)
+    ]
+    if len(initial) != 1:
+        raise ValueError("확정할 초기 원판 후보를 정확히 하나 지정해야 합니다.")
+    video_id = str(initial.iloc[0]["video_id"])
+    if set(candidates["video_id"].astype(str)) != {video_id}:
+        raise ValueError("원판 후보는 하나의 video_id만 포함해야 합니다.")
+
+    lifter_by_frame = _lifter_centers_by_frame(lifter_centers)
+    candidates_by_frame = {
+        int(frame_index): frame
+        for frame_index, frame in candidates.groupby("frame_index", sort=False)
+    }
+    previous = initial.iloc[0]
+    stopped = False
+    rows = []
+    for frame_index in range(frame_count):
+        timestamp_seconds = frame_index / fps if fps else math.nan
+        if stopped:
+            rows.append(
+                _empty_plate_track_row(
+                    video_id, frame_index, timestamp_seconds,
+                    "confirmation_required", "tracking_stopped_after_ambiguity",
+                )
+            )
+            continue
+        if frame_index < initial_frame_index:
+            rows.append(
+                _empty_plate_track_row(
+                    video_id, frame_index, timestamp_seconds, "missing",
+                    "before_initial_confirmation",
+                )
+            )
+            continue
+        if frame_index == initial_frame_index:
+            chosen = previous
+        else:
+            frame_candidates = candidates_by_frame.get(frame_index)
+            if frame_candidates is None or frame_candidates.empty:
+                rows.append(
+                    _empty_plate_track_row(
+                        video_id, frame_index, timestamp_seconds, "missing", "no_detection"
+                    )
+                )
+                continue
+            chosen, ambiguous = _select_continuous_plate(
+                frame_candidates, previous, lifter_by_frame.get(frame_index),
+                max_center_shift=max_center_shift,
+                max_area_log_change=max_area_log_change,
+                ambiguity_margin=continuity_ambiguity_margin,
+            )
+            if ambiguous:
+                rows.append(
+                    _empty_plate_track_row(
+                        video_id, frame_index, timestamp_seconds,
+                        "confirmation_required", "ambiguous_candidates",
+                    )
+                )
+                stopped = True
+                continue
+            if chosen is None:
+                rows.append(
+                    _empty_plate_track_row(
+                        video_id, frame_index, timestamp_seconds, "missing",
+                        "continuity_mismatch",
+                    )
+                )
+                continue
+
+        previous = chosen
+        row = chosen.loc[list(PLATE_CANDIDATE_COLUMNS)].to_dict()
+        row.update(status="ok", reason="")
+        rows.append(row)
+    return pd.DataFrame(rows, columns=PLATE_TRACK_COLUMNS)
+
+
+def _validate_plate_table(
+    table: pd.DataFrame,
+    columns: tuple[str, ...],
+    table_name: str,
+) -> None:
+    if tuple(table.columns) != columns:
+        raise ValueError(f"원판 {table_name} schema가 일치하지 않습니다.")
+    key_columns = ["video_id", "frame_index"]
+    if columns == PLATE_CANDIDATE_COLUMNS:
+        key_columns.append("candidate_id")
+    if table.duplicated(key_columns).any():
+        raise ValueError(f"원판 {table_name}에 duplicate 복합키가 있습니다.")
+
+
+def _lifter_centers_by_frame(
+    lifter_centers: pd.DataFrame | None,
+) -> dict[int, tuple[float, float]]:
+    if lifter_centers is None:
+        return {}
+    required_columns = {"frame_index", "center_x_px", "center_y_px"}
+    if not required_columns.issubset(lifter_centers.columns):
+        raise ValueError("lifter_centers에 frame_index와 중심 좌표가 필요합니다.")
+    if lifter_centers.duplicated("frame_index").any():
+        raise ValueError("lifter_centers frame_index는 고유해야 합니다.")
+    return {
+        int(row.frame_index): (float(row.center_x_px), float(row.center_y_px))
+        for row in lifter_centers.loc[:, sorted(required_columns)].itertuples(index=False)
+    }
+
+
+def _select_continuous_plate(
+    frame_candidates: pd.DataFrame,
+    previous: pd.Series,
+    lifter_center: tuple[float, float] | None,
+    *,
+    max_center_shift: float,
+    max_area_log_change: float,
+    ambiguity_margin: float,
+) -> tuple[pd.Series | None, bool]:
+    previous_width = max(float(previous["bbox_x2"] - previous["bbox_x1"]), 1.0)
+    previous_height = max(float(previous["bbox_y2"] - previous["bbox_y1"]), 1.0)
+    scale = max(math.hypot(previous_width, previous_height), 1.0)
+    previous_area = max(previous_width * previous_height, 1.0)
+    ranked = frame_candidates.copy()
+    for column in (
+        "bbox_x1",
+        "bbox_y1",
+        "bbox_x2",
+        "bbox_y2",
+        "center_x_px",
+        "center_y_px",
+    ):
+        ranked[column] = pd.to_numeric(ranked[column], errors="raise").astype(float)
+    ranked["center_shift"] = np.hypot(
+        ranked["center_x_px"] - float(previous["center_x_px"]),
+        ranked["center_y_px"] - float(previous["center_y_px"]),
+    ) / scale
+    areas = (ranked["bbox_x2"] - ranked["bbox_x1"]) * (
+        ranked["bbox_y2"] - ranked["bbox_y1"]
+    )
+    ranked["area_log_change"] = np.abs(np.log(areas.clip(lower=1.0) / previous_area))
+    viable = ranked.loc[
+        (ranked["center_shift"] <= max_center_shift)
+        & (ranked["area_log_change"] <= max_area_log_change)
+    ].copy()
+    if viable.empty:
+        return None, False
+    viable["continuity_cost"] = viable["center_shift"] + viable["area_log_change"]
+    if lifter_center is not None:
+        viable["continuity_cost"] += np.hypot(
+            viable["center_x_px"] - lifter_center[0],
+            viable["center_y_px"] - lifter_center[1],
+        ) / scale
+    ranked = viable.sort_values(["continuity_cost", "candidate_id"]).reset_index(drop=True)
+    ambiguous = len(ranked) > 1 and (
+        float(ranked.loc[1, "continuity_cost"] - ranked.loc[0, "continuity_cost"])
+        <= ambiguity_margin
+    )
+    return (None, True) if ambiguous else (ranked.iloc[0], False)
+
+
+def _empty_plate_track_row(
+    video_id: str,
+    frame_index: int,
+    timestamp_seconds: float,
+    status: str,
+    reason: str,
+) -> dict[str, Any]:
+    row = {column: math.nan for column in PLATE_TRACK_COLUMNS}
+    row.update(
+        video_id=video_id,
+        frame_index=frame_index,
+        timestamp_seconds=timestamp_seconds,
+        status=status,
+        reason=reason,
+    )
+    return row
 
 
 def _allocate_phase_counts(
