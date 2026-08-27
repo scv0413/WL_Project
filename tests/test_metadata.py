@@ -8,8 +8,12 @@ import numpy as np
 import pandas as pd
 
 from snatch_analysis.metadata import (
+    EVALUATION_SPLIT_COLUMNS,
+    build_evaluation_video_split,
     parse_video_filename,
     save_video_manifest,
+    set_has_plate_labels,
+    set_split_roles_by_person,
     set_visible_body_side_labels,
     write_video_manifest,
 )
@@ -63,6 +67,7 @@ class WriteVideoManifestTests(unittest.TestCase):
             self.assertEqual(saved_manifest.loc[0, "has_plate"], "unknown")
             self.assertEqual(saved_manifest.loc[0, "camera_motion"], "unknown")
             self.assertEqual(saved_manifest.loc[0, "visible_body_side"], "unknown")
+            self.assertEqual(saved_manifest.loc[0, "split_role"], "unassigned")
 
     def test_rebuild_preserves_manual_metadata(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -84,6 +89,22 @@ class WriteVideoManifestTests(unittest.TestCase):
             self.assertEqual(rebuilt.loc[0, "has_plate"], "yes")
             self.assertEqual(rebuilt.loc[0, "camera_motion"], "fixed")
             self.assertEqual(rebuilt.loc[0, "visible_body_side"], "left")
+
+    def test_rebuild_applies_person_split_role_to_a_new_repeat(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            video_directory = root / "videos"
+            output_path = root / "metadata" / "videos.csv"
+            video_directory.mkdir()
+            self._write_test_video(video_directory / "c01_sn_f_01.mp4")
+            manifest = write_video_manifest(video_directory, output_path)
+            manifest.loc[0, "split_role"] = "rule_blind"
+            manifest.to_csv(output_path, index=False)
+            self._write_test_video(video_directory / "c01_sn_f_02.mp4")
+
+            rebuilt = write_video_manifest(video_directory, output_path)
+
+            self.assertEqual(set(rebuilt["split_role"]), {"rule_blind"})
 
     def test_sets_visible_body_side_labels_by_video_id(self) -> None:
         manifest = pd.DataFrame(
@@ -158,6 +179,180 @@ class WriteVideoManifestTests(unittest.TestCase):
             writer.write(frame)
         writer.release()
 
+
+class EvaluationSplitTests(unittest.TestCase):
+    def test_assigns_a_person_role_to_all_of_their_videos(self) -> None:
+        manifest = pd.DataFrame(
+            {
+                "video_id": ["a01_sn_f_01", "a01_sn_h_02", "b01_sn_f_01"],
+                "person_id": ["a01", "a01", "b01"],
+            }
+        )
+
+        labeled = set_split_roles_by_person(
+            manifest,
+            {
+                "a01": "model_selection_pilot",
+                "b01": "rule_blind",
+            },
+        )
+
+        self.assertEqual(
+            labeled["split_role"].tolist(),
+            ["model_selection_pilot", "model_selection_pilot", "rule_blind"],
+        )
+
+    def test_rejects_an_invalid_split_role(self) -> None:
+        manifest = pd.DataFrame(
+            {"video_id": ["a01_sn_f_01"], "person_id": ["a01"]}
+        )
+
+        with self.assertRaisesRegex(ValueError, "split_role"):
+            set_split_roles_by_person(manifest, {"a01": "validation"})
+
+    def test_builds_one_confirmed_abc_model_selection_video_each(self) -> None:
+        manifest = self._evaluation_manifest()
+
+        split = build_evaluation_video_split(
+            manifest,
+            ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+        )
+
+        self.assertEqual(tuple(split.columns), EVALUATION_SPLIT_COLUMNS)
+        self.assertEqual(split["group"].tolist(), ["A", "B", "C"])
+        self.assertEqual(
+            set(split["split_role"]),
+            {"model_selection_pilot"},
+        )
+
+    def test_requires_f_videos_for_the_pre_u12_model_pilot(self) -> None:
+        manifest = self._evaluation_manifest()
+        manifest.loc[manifest["group"] == "A", "completion"] = "h"
+
+        with self.assertRaisesRegex(ValueError, "completion=f"):
+            build_evaluation_video_split(
+                manifest,
+                ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+            )
+
+    def test_rejects_person_leakage_between_split_roles(self) -> None:
+        manifest = self._evaluation_manifest()
+        leaked = pd.concat(
+            [
+                manifest,
+                manifest.iloc[[0]].assign(
+                    video_id="a01_sn_f_02",
+                    split_role="rule_blind",
+                ),
+            ],
+            ignore_index=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "person_id.*split_role"):
+            build_evaluation_video_split(
+                leaked,
+                ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+            )
+
+    def test_rejects_unconfirmed_manual_metadata(self) -> None:
+        manifest = self._evaluation_manifest()
+        manifest.loc[manifest["video_id"] == "b01_sn_f_01", "has_plate"] = (
+            "unknown"
+        )
+
+        with self.assertRaisesRegex(ValueError, "has_plate"):
+            build_evaluation_video_split(
+                manifest,
+                ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+            )
+
+    def test_rejects_invalid_manual_metadata_values(self) -> None:
+        for column, invalid_value in (
+            ("has_plate", "maybe"),
+            ("visible_body_side", "front"),
+        ):
+            manifest = self._evaluation_manifest()
+            manifest.loc[manifest["video_id"] == "b01_sn_f_01", column] = (
+                invalid_value
+            )
+
+            with self.subTest(column=column):
+                with self.assertRaisesRegex(ValueError, column):
+                    build_evaluation_video_split(
+                        manifest,
+                        ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+                    )
+
+    def test_rejects_training_video_from_evaluation_split(self) -> None:
+        manifest = self._evaluation_manifest()
+        training = manifest.iloc[[0]].assign(
+            video_id="a02_sn_f_01",
+            person_id="a02",
+            split_role="training_development",
+        )
+        manifest = pd.concat([manifest, training], ignore_index=True)
+
+        with self.assertRaisesRegex(ValueError, "training_development"):
+            build_evaluation_video_split(
+                manifest,
+                [
+                    "a01_sn_f_01",
+                    "b01_sn_f_01",
+                    "c01_sn_f_01",
+                    "a02_sn_f_01",
+                ],
+            )
+
+    def test_requires_one_video_for_each_evaluation_person(self) -> None:
+        manifest = self._evaluation_manifest()
+        rule_blind = manifest.iloc[[0]].assign(
+            video_id="a02_sn_f_01",
+            person_id="a02",
+            split_role="rule_blind",
+        )
+        manifest = pd.concat([manifest, rule_blind], ignore_index=True)
+
+        with self.assertRaisesRegex(ValueError, "평가 person_id"):
+            build_evaluation_video_split(
+                manifest,
+                ["a01_sn_f_01", "b01_sn_f_01", "c01_sn_f_01"],
+            )
+
+    def test_sets_has_plate_labels_by_video_id(self) -> None:
+        manifest = pd.DataFrame(
+            {"video_id": ["a01_sn_f_01", "b01_sn_f_01"]}
+        )
+
+        labeled = set_has_plate_labels(
+            manifest,
+            {"a01_sn_f_01": "yes", "b01_sn_f_01": "no"},
+        )
+
+        self.assertEqual(labeled["has_plate"].tolist(), ["yes", "no"])
+
+    @staticmethod
+    def _evaluation_manifest() -> pd.DataFrame:
+        rows = []
+        for group in ("A", "B", "C"):
+            prefix = group.lower()
+            rows.append(
+                {
+                    "video_id": f"{prefix}01_sn_f_01",
+                    "person_id": f"{prefix}01",
+                    "group": group,
+                    "split_role": "model_selection_pilot",
+                    "completion": "f",
+                    "path": f"data/raw/videos/{prefix}01_sn_f_01.mp4",
+                    "fps": 30.0,
+                    "frame_count": 100,
+                    "width": 1920,
+                    "height": 1080,
+                    "has_plate": "yes",
+                    "visible_body_side": "left",
+                    "read_status": "ok",
+                }
+            )
+        return pd.DataFrame(rows)
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,11 @@ import nbformat
 import numpy as np
 import pandas as pd
 
+from snatch_analysis.plate import (
+    build_pilot_ground_truth_template,
+    save_pilot_ground_truth,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "01_data_diagnosis.ipynb"
@@ -144,6 +149,216 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
             ):
                 self._execute_notebook(run_root, notebook)
 
+    def test_u9_saves_person_split_and_blind_phase_samples_before_bbox(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            run_root = Path(temporary_directory)
+            (run_root / "pyproject.toml").touch()
+            video_directory = run_root / "data" / "raw" / "videos"
+            video_directory.mkdir(parents=True)
+            video_ids = (
+                "b00_sn_f_01",
+                "a01_sn_f_01",
+                "b01_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            )
+            for video_id in video_ids:
+                self._write_test_video(video_directory / f"{video_id}.mp4", frames=10)
+
+            notebook = nbformat.read(NOTEBOOK_PATH, as_version=4)
+            settings = next(
+                cell for cell in notebook.cells if cell.get("id") == "u9-settings"
+            )
+            roles = {
+                "a01": "model_selection_pilot",
+                "b01": "model_selection_pilot",
+                "c01": "model_selection_pilot",
+                "a02": "rule_development",
+                "a03": "rule_blind",
+            }
+            selected = [
+                "a01_sn_f_01",
+                "b01_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            ]
+            labels = {
+                video_id: {"has_plate": "yes", "visible_body_side": "left"}
+                for video_id in selected
+            }
+            events = {
+                video_id: {
+                    "bar_off_floor": 2,
+                    "knee_pass": 4,
+                    "max_extension": 6,
+                    "catch_stable": 7,
+                    "recovery_stable": 9,
+                }
+                for video_id in selected[:3]
+            }
+            settings.source = (
+                f"U9_EVALUATION_PERSON_ROLES = {roles!r}\n"
+                f"U9_SELECTED_VIDEO_IDS = {selected!r}\n"
+                f"U9_VIDEO_LABELS = {labels!r}\n"
+                f"U9_EVENT_FRAMES = {events!r}\n"
+                'U9_ANNOTATOR = "coach"\n'
+                "OVERWRITE_U9_PHASE_EVENTS = False\n"
+                "RUN_U9_MANUAL_BBOX_LABELING = False\n"
+                "OVERWRITE_U9_GROUND_TRUTH = False"
+            )
+
+            self._execute_notebook(run_root, notebook)
+
+            split = pd.read_csv(
+                run_root / "data" / "splits" / "evaluation_videos.csv"
+            )
+            phase_events = pd.read_csv(
+                run_root / "data" / "annotations" / "phase_events.csv"
+            )
+            self.assertEqual(len(split), 5)
+            self.assertEqual(
+                split["split_role"].value_counts().to_dict(),
+                {
+                    "model_selection_pilot": 3,
+                    "rule_development": 1,
+                    "rule_blind": 1,
+                },
+            )
+            self.assertEqual(len(phase_events), 15)
+            self.assertFalse(
+                (run_root / "data" / "annotations" / "pilot_frame_ground_truth.csv").exists()
+            )
+
+    def test_u9_rejects_core_training_person_in_evaluation_roles(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            run_root = Path(temporary_directory)
+            (run_root / "pyproject.toml").touch()
+            video_directory = run_root / "data" / "raw" / "videos"
+            video_directory.mkdir(parents=True)
+            video_ids = (
+                "b00_sn_f_01",
+                "a01_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            )
+            for video_id in video_ids:
+                self._write_test_video(video_directory / f"{video_id}.mp4", frames=10)
+            notebook = nbformat.read(NOTEBOOK_PATH, as_version=4)
+            settings = next(
+                cell for cell in notebook.cells if cell.get("id") == "u9-settings"
+            )
+            roles = {
+                "a01": "model_selection_pilot",
+                "b00": "model_selection_pilot",
+                "c01": "model_selection_pilot",
+                "a02": "rule_development",
+                "a03": "rule_blind",
+            }
+            selected = [
+                "a01_sn_f_01",
+                "b00_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            ]
+            labels = {
+                video_id: {"has_plate": "yes", "visible_body_side": "left"}
+                for video_id in selected
+            }
+            settings.source = self._u9_settings_source(roles, selected, labels, {})
+
+            with self.assertRaisesRegex(CellExecutionError, "Core training person"):
+                self._execute_notebook(run_root, notebook)
+
+    def test_u9_rejects_ground_truth_from_different_sample_frames(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            run_root = Path(temporary_directory)
+            (run_root / "pyproject.toml").touch()
+            video_directory = run_root / "data" / "raw" / "videos"
+            video_directory.mkdir(parents=True)
+            video_ids = (
+                "b00_sn_f_01",
+                "a01_sn_f_01",
+                "b01_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            )
+            for video_id in video_ids:
+                self._write_test_video(video_directory / f"{video_id}.mp4", frames=20)
+            roles = {
+                "a01": "model_selection_pilot",
+                "b01": "model_selection_pilot",
+                "c01": "model_selection_pilot",
+                "a02": "rule_development",
+                "a03": "rule_blind",
+            }
+            selected = [
+                "a01_sn_f_01",
+                "b01_sn_f_01",
+                "c01_sn_f_01",
+                "a02_sn_f_01",
+                "a03_sn_f_01",
+            ]
+            labels = {
+                video_id: {"has_plate": "yes", "visible_body_side": "left"}
+                for video_id in selected
+            }
+            events = {
+                video_id: {
+                    "bar_off_floor": 2,
+                    "knee_pass": 5,
+                    "max_extension": 9,
+                    "catch_stable": 14,
+                    "recovery_stable": 19,
+                }
+                for video_id in selected[:3]
+            }
+            notebook = nbformat.read(NOTEBOOK_PATH, as_version=4)
+            settings = next(
+                cell for cell in notebook.cells if cell.get("id") == "u9-settings"
+            )
+            settings.source = self._u9_settings_source(
+                roles, selected, labels, events
+            )
+            self._execute_notebook(run_root, notebook)
+
+            evaluation_split = pd.read_csv(
+                run_root / "data" / "splits" / "evaluation_videos.csv"
+            )
+            pilot = evaluation_split.loc[
+                evaluation_split["split_role"] == "model_selection_pilot"
+            ]
+            stale_samples = pd.DataFrame(
+                [
+                    {"video_id": video_id, "frame_index": frame_index}
+                    for video_id in pilot["video_id"]
+                    for frame_index in range(10)
+                ]
+            )
+            stale = build_pilot_ground_truth_template(stale_samples, evaluation_split)
+            stale.loc[:, [
+                "plate_bbox_x", "plate_bbox_y",
+                "plate_bbox_width", "plate_bbox_height",
+            ]] = [1, 1, 5, 5]
+            stale.loc[:, [
+                "lifter_bbox_x", "lifter_bbox_y",
+                "lifter_bbox_width", "lifter_bbox_height",
+            ]] = [10, 1, 20, 40]
+            ground_truth_path = (
+                run_root / "data" / "annotations" / "pilot_frame_ground_truth.csv"
+            )
+            save_pilot_ground_truth(stale, evaluation_split, ground_truth_path)
+
+            with self.assertRaisesRegex(
+                CellExecutionError,
+                "OVERWRITE_U9_GROUND_TRUTH",
+            ):
+                self._execute_notebook(run_root, notebook)
+
     @staticmethod
     def _execute_notebook(
         run_root: Path,
@@ -159,7 +374,7 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
         return executed_notebook
 
     @staticmethod
-    def _write_test_video(path: Path) -> None:
+    def _write_test_video(path: Path, *, frames: int = 5) -> None:
         writer = cv2.VideoWriter(
             str(path),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -169,9 +384,27 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
         if not writer.isOpened():
             raise RuntimeError("OpenCV could not create the test MP4")
         frame = np.zeros((48, 64, 3), dtype=np.uint8)
-        for _ in range(5):
+        for _ in range(frames):
             writer.write(frame)
         writer.release()
+
+    @staticmethod
+    def _u9_settings_source(
+        roles: dict[str, str],
+        selected: list[str],
+        labels: dict[str, dict[str, str]],
+        events: dict[str, dict[str, int]],
+    ) -> str:
+        return (
+            f"U9_EVALUATION_PERSON_ROLES = {roles!r}\n"
+            f"U9_SELECTED_VIDEO_IDS = {selected!r}\n"
+            f"U9_VIDEO_LABELS = {labels!r}\n"
+            f"U9_EVENT_FRAMES = {events!r}\n"
+            'U9_ANNOTATOR = "coach"\n'
+            "OVERWRITE_U9_PHASE_EVENTS = False\n"
+            "RUN_U9_MANUAL_BBOX_LABELING = False\n"
+            "OVERWRITE_U9_GROUND_TRUTH = False"
+        )
 
 
 if __name__ == "__main__":

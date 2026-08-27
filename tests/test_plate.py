@@ -8,17 +8,21 @@ import numpy as np
 import pandas as pd
 
 from snatch_analysis.plate import (
+    PILOT_GROUND_TRUTH_COLUMNS,
     PLATE_CANDIDATE_COLUMNS,
     PLATE_TRACK_COLUMNS,
     SAMPLE_PHASES,
+    build_pilot_ground_truth_template,
     opencv_bbox_to_yolo,
     plate_result_to_candidates,
     sample_phase_frames,
+    save_pilot_ground_truth,
     save_plate_candidate_cache,
     save_plate_image,
     save_plate_track,
     save_yolo_plate_label,
     select_primary_plate_track,
+    validate_pilot_ground_truth,
     yolo_bbox_to_opencv,
 )
 
@@ -176,6 +180,199 @@ class PlateBoundingBoxTests(unittest.TestCase):
                 original_label,
             )
 
+
+class PilotGroundTruthTests(unittest.TestCase):
+    def test_builds_and_saves_thirty_validated_frame_labels(self) -> None:
+        evaluation_split = self._evaluation_split()
+        ground_truth = self._completed_ground_truth(evaluation_split)
+
+        validated = validate_pilot_ground_truth(
+            ground_truth,
+            evaluation_split,
+        )
+
+        self.assertEqual(tuple(validated.columns), PILOT_GROUND_TRUTH_COLUMNS)
+        self.assertEqual(len(validated), 30)
+        with TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "pilot_ground_truth.csv"
+            save_pilot_ground_truth(validated, evaluation_split, output_path)
+            saved = pd.read_csv(output_path)
+        self.assertEqual(len(saved), 30)
+
+    def test_rejects_partial_model_selection_pilot(self) -> None:
+        evaluation_split = self._evaluation_split().iloc[[0]].copy()
+        samples = self._sample_frames(evaluation_split)
+
+        with self.assertRaisesRegex(ValueError, "A/B/C"):
+            build_pilot_ground_truth_template(samples, evaluation_split)
+
+    def test_rejects_duplicate_video_frame_keys(self) -> None:
+        evaluation_split = self._evaluation_split()
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        ground_truth.loc[1, "frame_index"] = ground_truth.loc[0, "frame_index"]
+
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+    def test_rejects_bbox_outside_the_frame(self) -> None:
+        evaluation_split = self._evaluation_split()
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        ground_truth.loc[0, "plate_bbox_x"] = 95
+
+        with self.assertRaisesRegex(ValueError, "outside"):
+            validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+    def test_rejects_missing_bbox_without_na_reason(self) -> None:
+        evaluation_split = self._evaluation_split()
+        samples = self._sample_frames(evaluation_split)
+        template = build_pilot_ground_truth_template(samples, evaluation_split)
+
+        with self.assertRaisesRegex(ValueError, "bbox.*na_reason"):
+            validate_pilot_ground_truth(template, evaluation_split)
+
+    def test_no_plate_video_keeps_lifter_bbox_and_plate_na(self) -> None:
+        evaluation_split = self._evaluation_split(has_plate="no")
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        plate_columns = [
+            "plate_bbox_x",
+            "plate_bbox_y",
+            "plate_bbox_width",
+            "plate_bbox_height",
+        ]
+        ground_truth.loc[:, plate_columns] = np.nan
+        ground_truth.loc[:, "na_reason"] = "no_plate"
+
+        validated = validate_pilot_ground_truth(
+            ground_truth,
+            evaluation_split,
+        )
+
+        self.assertTrue(validated[plate_columns].isna().all().all())
+        self.assertFalse(validated["lifter_bbox_x"].isna().any())
+
+    def test_no_plate_bbox_requires_no_plate_reason(self) -> None:
+        evaluation_split = self._evaluation_split(has_plate="no")
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        plate_columns = [
+            "plate_bbox_x",
+            "plate_bbox_y",
+            "plate_bbox_width",
+            "plate_bbox_height",
+        ]
+        ground_truth.loc[:, plate_columns] = np.nan
+        ground_truth.loc[:, "na_reason"] = ""
+
+        with self.assertRaisesRegex(ValueError, "no_plate"):
+            validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+    def test_no_plate_reason_cannot_hide_a_missing_lifter_bbox(self) -> None:
+        evaluation_split = self._evaluation_split(has_plate="no")
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        ground_truth.loc[:, [
+            "plate_bbox_x",
+            "plate_bbox_y",
+            "plate_bbox_width",
+            "plate_bbox_height",
+            "lifter_bbox_x",
+            "lifter_bbox_y",
+            "lifter_bbox_width",
+            "lifter_bbox_height",
+        ]] = np.nan
+        ground_truth.loc[:, "na_reason"] = "no_plate"
+
+        with self.assertRaisesRegex(ValueError, "lifter bbox.*na_reason"):
+            validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+    def test_validation_does_not_depend_on_dataframe_index(self) -> None:
+        evaluation_split = self._evaluation_split()
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        ground_truth.index = range(10, 40)
+
+        validated = validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+        self.assertEqual(len(validated), 30)
+
+    def test_keeps_plate_and_lifter_cancellation_reasons(self) -> None:
+        evaluation_split = self._evaluation_split()
+        ground_truth = self._completed_ground_truth(evaluation_split)
+        ground_truth.loc[0, [
+            "plate_bbox_x",
+            "plate_bbox_y",
+            "plate_bbox_width",
+            "plate_bbox_height",
+        ]] = np.nan
+        ground_truth.loc[0, "na_reason"] = "plate_label_cancelled"
+        ground_truth.loc[1, [
+            "lifter_bbox_x",
+            "lifter_bbox_y",
+            "lifter_bbox_width",
+            "lifter_bbox_height",
+        ]] = np.nan
+        ground_truth.loc[1, "na_reason"] = "lifter_label_cancelled"
+
+        validated = validate_pilot_ground_truth(ground_truth, evaluation_split)
+
+        self.assertEqual(validated.loc[0, "na_reason"], "plate_label_cancelled")
+        self.assertEqual(validated.loc[1, "na_reason"], "lifter_label_cancelled")
+
+    @staticmethod
+    def _evaluation_split(has_plate: str = "yes") -> pd.DataFrame:
+        rows = []
+        for group in ("A", "B", "C"):
+            prefix = group.lower()
+            rows.append(
+                {
+                    "video_id": f"{prefix}01_sn_f_01",
+                    "person_id": f"{prefix}01",
+                    "group": group,
+                    "split_role": "model_selection_pilot",
+                    "completion": "f",
+                    "path": f"data/raw/videos/{prefix}01_sn_f_01.mp4",
+                    "fps": 30.0,
+                    "frame_count": 20,
+                    "width": 100,
+                    "height": 50,
+                    "has_plate": has_plate,
+                    "visible_body_side": "left",
+                    "read_status": "ok",
+                }
+            )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _sample_frames(evaluation_split: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"video_id": video_id, "frame_index": frame_index}
+                for video_id in evaluation_split["video_id"]
+                for frame_index in range(10)
+            ]
+        )
+
+    @classmethod
+    def _completed_ground_truth(
+        cls,
+        evaluation_split: pd.DataFrame,
+    ) -> pd.DataFrame:
+        samples = cls._sample_frames(evaluation_split)
+        ground_truth = build_pilot_ground_truth_template(
+            samples,
+            evaluation_split,
+        )
+        ground_truth.loc[:, [
+            "plate_bbox_x",
+            "plate_bbox_y",
+            "plate_bbox_width",
+            "plate_bbox_height",
+        ]] = [10, 10, 20, 20]
+        ground_truth.loc[:, [
+            "lifter_bbox_x",
+            "lifter_bbox_y",
+            "lifter_bbox_width",
+            "lifter_bbox_height",
+        ]] = [30, 0, 50, 50]
+        ground_truth.loc[:, "annotator"] = "coach"
+        return ground_truth
 
 class _FakeBoxes:
     def __init__(self, xyxy: np.ndarray, confidence: np.ndarray) -> None:

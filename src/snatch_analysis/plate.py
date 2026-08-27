@@ -45,6 +45,23 @@ PLATE_CANDIDATE_COLUMNS = (
     "center_y_normalized",
 )
 PLATE_TRACK_COLUMNS = (*PLATE_CANDIDATE_COLUMNS, "status", "reason")
+PILOT_FRAMES_PER_VIDEO = 10
+PILOT_GROUND_TRUTH_COLUMNS = (
+    "video_id",
+    "frame_index",
+    "plate_present",
+    "plate_bbox_x",
+    "plate_bbox_y",
+    "plate_bbox_width",
+    "plate_bbox_height",
+    "lifter_bbox_x",
+    "lifter_bbox_y",
+    "lifter_bbox_width",
+    "lifter_bbox_height",
+    "annotator",
+    "notes",
+    "na_reason",
+)
 
 
 def sample_phase_frames(
@@ -322,6 +339,102 @@ def save_plate_track(
     _write_csv_atomically(track, output_path)
 
 
+def build_pilot_ground_truth_template(
+    sampled_frames: pd.DataFrame,
+    evaluation_split: pd.DataFrame,
+) -> pd.DataFrame:
+    """평가 영상의 수동 plate·lifter bbox 입력용 빈 표를 만든다."""
+    required_sample_columns = {"video_id", "frame_index"}
+    missing_sample = sorted(required_sample_columns - set(sampled_frames.columns))
+    if missing_sample:
+        raise ValueError("sample columns missing: " + ", ".join(missing_sample))
+    pilot = _model_selection_pilot(evaluation_split)
+
+    samples = sampled_frames.loc[:, ["video_id", "frame_index"]].copy()
+    if samples.duplicated(["video_id", "frame_index"]).any():
+        raise ValueError("pilot ground truth에 duplicate video/frame이 있습니다.")
+    _validate_pilot_sample_frames(samples, pilot)
+    video_metadata = pilot.set_index("video_id")
+    samples["plate_present"] = samples["video_id"].map(
+        video_metadata["has_plate"]
+    )
+    for prefix in ("plate", "lifter"):
+        for coordinate in ("x", "y", "width", "height"):
+            samples[f"{prefix}_bbox_{coordinate}"] = math.nan
+    samples["annotator"] = ""
+    samples["notes"] = ""
+    samples["na_reason"] = np.where(
+        samples["plate_present"] == "no",
+        "no_plate",
+        "",
+    )
+    return samples.loc[:, PILOT_GROUND_TRUTH_COLUMNS]
+
+
+def validate_pilot_ground_truth(
+    ground_truth: pd.DataFrame,
+    evaluation_split: pd.DataFrame,
+) -> pd.DataFrame:
+    """수동 평가 bbox, frame 범위와 N/A 사유를 검증한다."""
+    if tuple(ground_truth.columns) != PILOT_GROUND_TRUTH_COLUMNS:
+        raise ValueError("pilot ground truth schema가 일치하지 않습니다.")
+    if ground_truth.duplicated(["video_id", "frame_index"]).any():
+        raise ValueError("pilot ground truth에 duplicate video/frame이 있습니다.")
+
+    pilot = _model_selection_pilot(evaluation_split)
+    _validate_pilot_sample_frames(
+        ground_truth.loc[:, ["video_id", "frame_index"]],
+        pilot,
+    )
+    validated = ground_truth.copy()
+    for column in ("plate_present", "annotator", "notes", "na_reason"):
+        validated[column] = validated[column].fillna("").astype(str).str.strip()
+    validated["plate_present"] = validated["plate_present"].str.lower()
+    if not set(validated["plate_present"]).issubset({"yes", "no"}):
+        raise ValueError("plate_present는 yes/no만 허용합니다.")
+
+    metadata_by_video = pilot.set_index("video_id")
+    expected_plate = validated["video_id"].map(metadata_by_video["has_plate"])
+    if not validated["plate_present"].reset_index(drop=True).equals(
+        expected_plate.reset_index(drop=True)
+    ):
+        raise ValueError("plate_present가 evaluation split의 has_plate와 다릅니다.")
+
+    for row_index, row in validated.iterrows():
+        metadata = metadata_by_video.loc[str(row["video_id"])]
+        width = int(metadata["width"])
+        height = int(metadata["height"])
+        na_reason = str(row["na_reason"])
+        _validate_ground_truth_bbox(
+            row,
+            prefix="plate",
+            image_width=width,
+            image_height=height,
+            required=row["plate_present"] == "yes",
+            na_reason=na_reason,
+        )
+        _validate_ground_truth_bbox(
+            row,
+            prefix="lifter",
+            image_width=width,
+            image_height=height,
+            required=True,
+            na_reason=na_reason,
+        )
+        validated.at[row_index, "frame_index"] = int(row["frame_index"])
+    return validated.loc[:, PILOT_GROUND_TRUTH_COLUMNS]
+
+
+def save_pilot_ground_truth(
+    ground_truth: pd.DataFrame,
+    evaluation_split: pd.DataFrame,
+    output_path: str | Path,
+) -> None:
+    """검증을 통과한 pilot 정답만 원자적으로 저장한다."""
+    validated = validate_pilot_ground_truth(ground_truth, evaluation_split)
+    _write_csv_atomically(validated, output_path)
+
+
 def select_primary_plate_track(
     candidates: pd.DataFrame,
     *,
@@ -544,6 +657,101 @@ def _allocate_phase_counts(
         if not progressed:
             raise ValueError("sample_count exceeds available unique frames")
     return counts
+
+
+def _model_selection_pilot(evaluation_split: pd.DataFrame) -> pd.DataFrame:
+    required_columns = {
+        "video_id",
+        "group",
+        "split_role",
+        "frame_count",
+        "width",
+        "height",
+        "has_plate",
+    }
+    missing = sorted(required_columns - set(evaluation_split.columns))
+    if missing:
+        raise ValueError("evaluation split columns missing: " + ", ".join(missing))
+    pilot = evaluation_split.loc[
+        evaluation_split["split_role"] == "model_selection_pilot"
+    ].copy()
+    if pilot.empty:
+        raise ValueError("model_selection_pilot 영상이 없습니다.")
+    if pilot["video_id"].duplicated().any():
+        raise ValueError("evaluation split video_id가 중복되었습니다.")
+    if len(pilot) != 3 or pilot["group"].value_counts().to_dict() != {
+        "A": 1,
+        "B": 1,
+        "C": 1,
+    }:
+        raise ValueError("model_selection_pilot은 A/B/C 영상이 각각 하나씩 필요합니다.")
+    return pilot
+
+
+def _validate_pilot_sample_frames(
+    samples: pd.DataFrame,
+    pilot: pd.DataFrame,
+) -> None:
+    expected_video_ids = set(pilot["video_id"].astype(str))
+    actual_video_ids = set(samples["video_id"].astype(str))
+    if actual_video_ids != expected_video_ids:
+        raise ValueError("pilot ground truth video_id가 evaluation split과 다릅니다.")
+
+    numeric_indices = pd.to_numeric(samples["frame_index"], errors="raise")
+    if not np.isfinite(numeric_indices).all() or not np.equal(
+        numeric_indices,
+        np.floor(numeric_indices),
+    ).all():
+        raise ValueError("frame_index must contain finite integers")
+    counts = samples.groupby("video_id").size()
+    if not (counts == PILOT_FRAMES_PER_VIDEO).all():
+        raise ValueError(
+            f"각 pilot 영상에는 {PILOT_FRAMES_PER_VIDEO}개 frame이 필요합니다."
+        )
+    frame_counts = samples["video_id"].map(
+        pilot.set_index("video_id")["frame_count"]
+    )
+    if ((numeric_indices < 0) | (numeric_indices >= frame_counts)).any():
+        raise ValueError("pilot frame_index가 영상 범위를 벗어났습니다.")
+
+
+def _validate_ground_truth_bbox(
+    row: pd.Series,
+    *,
+    prefix: str,
+    image_width: int,
+    image_height: int,
+    required: bool,
+    na_reason: str,
+) -> None:
+    columns = [
+        f"{prefix}_bbox_x",
+        f"{prefix}_bbox_y",
+        f"{prefix}_bbox_width",
+        f"{prefix}_bbox_height",
+    ]
+    values = row.loc[columns]
+    missing_count = int(values.isna().sum())
+    if missing_count == len(columns):
+        reasons = set(na_reason.split(";"))
+        if not required and prefix == "plate" and "no_plate" not in reasons:
+            raise ValueError("원판 없는 frame은 na_reason에 no_plate가 필요합니다.")
+        if required and not any(
+            reason.startswith(f"{prefix}_") for reason in reasons
+        ):
+            raise ValueError(
+                f"{prefix} bbox가 없으면 {prefix}_ 사유를 na_reason에 기록하세요."
+            )
+        return
+    if missing_count:
+        raise ValueError(f"{prefix} bbox는 네 좌표를 모두 입력해야 합니다.")
+    if not required:
+        raise ValueError(f"{prefix}가 없는 frame에는 bbox를 입력할 수 없습니다.")
+    _validate_opencv_bbox(
+        tuple(values.tolist()),
+        image_width=image_width,
+        image_height=image_height,
+    )
 
 
 def _validate_opencv_bbox(
