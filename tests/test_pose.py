@@ -1,12 +1,15 @@
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+import cv2
 import numpy as np
 import pandas as pd
 
+import snatch_analysis.pose as pose_module
 from snatch_analysis.pose import (
     COCO_KEYPOINT_NAMES,
     POSE_CANDIDATE_COLUMNS,
@@ -79,6 +82,100 @@ def candidates_for_frame(
 
 
 class PoseTests(unittest.TestCase):
+    def test_infers_pose_candidates_from_one_streaming_prediction(self) -> None:
+        runner = getattr(pose_module, "infer_pose_video_candidates", None)
+        self.assertTrue(callable(runner), "infer_pose_video_candidates is missing")
+
+        class FakePoseModel:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def predict(self, **kwargs):
+                self.calls.append(kwargs)
+                return iter(
+                    [
+                        pose_result(
+                            [[10.0, 10.0, 30.0, 40.0]],
+                            [0.9],
+                            [person_keypoints()],
+                        ),
+                        pose_result(
+                            [[11.0, 10.0, 31.0, 40.0]],
+                            [0.8],
+                            [person_keypoints()],
+                        ),
+                    ]
+                )
+
+        with TemporaryDirectory() as directory:
+            video_path = Path(directory) / "two_frames.mp4"
+            writer = cv2.VideoWriter(
+                str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (32, 24)
+            )
+            self.assertTrue(writer.isOpened())
+            try:
+                writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
+                writer.write(np.ones((24, 32, 3), dtype=np.uint8))
+            finally:
+                writer.release()
+
+            model = FakePoseModel()
+            candidates, processed_frame_count = runner(
+                model,
+                video_path=video_path,
+                video_id="a01_sn_f_01",
+                frame_count=2,
+                fps=30.0,
+                image_size=640,
+                confidence=0.25,
+                device="cpu",
+            )
+
+        self.assertEqual(processed_frame_count, 2)
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.calls[0]["source"], str(video_path))
+        self.assertTrue(model.calls[0]["stream"])
+        self.assertFalse(model.calls[0]["verbose"])
+        self.assertEqual(candidates["frame_index"].unique().tolist(), [0, 1])
+        self.assertEqual(set(candidates["video_id"]), {"a01_sn_f_01"})
+
+    def test_rejects_pose_stream_frame_count_mismatch(self) -> None:
+        class ShortPoseModel:
+            def predict(self, **kwargs):
+                return iter([
+                    pose_result(
+                        [[10.0, 10.0, 30.0, 40.0]],
+                        [0.9],
+                        [person_keypoints()],
+                    )
+                ])
+
+        with self.assertRaisesRegex(
+            RuntimeError, "expected=2, actual=1"
+        ):
+            pose_module.infer_pose_video_candidates(
+                ShortPoseModel(),
+                video_path=Path("short.mp4"),
+                video_id="a01_sn_f_01",
+                frame_count=2,
+                fps=30.0,
+                image_size=640,
+                confidence=0.25,
+                device="cpu",
+            )
+
+        with self.assertRaisesRegex(ValueError, "fps"):
+            pose_module.infer_pose_video_candidates(
+                ShortPoseModel(),
+                video_path=Path("short.mp4"),
+                video_id="a01_sn_f_01",
+                frame_count=1,
+                fps=0.0,
+                image_size=640,
+                confidence=0.25,
+                device="cpu",
+            )
+
     def test_pose_notebook_is_source_only_and_uses_automatic_selection(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
         code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]

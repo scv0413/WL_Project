@@ -321,6 +321,54 @@ def plate_result_to_candidates(
     return pd.DataFrame(rows, columns=PLATE_CANDIDATE_COLUMNS)
 
 
+def infer_plate_video_candidates(
+    model: Any,
+    *,
+    video_path: str | Path,
+    video_id: str,
+    frame_count: int,
+    fps: float,
+    image_width: int,
+    image_height: int,
+    image_size: int,
+    confidence: float,
+    device: str,
+) -> tuple[pd.DataFrame, int]:
+    """Ultralytics stream 결과를 원판 후보 표로 변환한다."""
+    frame_tables = []
+    results = model.predict(
+        source=str(video_path),
+        stream=True,
+        imgsz=image_size,
+        conf=confidence,
+        device=device,
+        verbose=False,
+    )
+    for frame_index, result in enumerate(results):
+        frame_tables.append(
+            plate_result_to_candidates(
+                result,
+                video_id,
+                frame_index,
+                frame_index / fps,
+                image_width=image_width,
+                image_height=image_height,
+            )
+        )
+    processed_frame_count = len(frame_tables)
+    if processed_frame_count != frame_count:
+        raise RuntimeError(
+            "Plate processed frame count mismatch: "
+            f"expected={frame_count}, actual={processed_frame_count}"
+        )
+    return (
+        pd.concat(frame_tables, ignore_index=True)
+        if frame_tables
+        else pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS),
+        processed_frame_count,
+    )
+
+
 def save_plate_candidate_cache(
     candidates: pd.DataFrame,
     output_path: str | Path,
@@ -533,6 +581,356 @@ def select_primary_plate_track(
         row.update(status="ok", reason="")
         rows.append(row)
     return pd.DataFrame(rows, columns=PLATE_TRACK_COLUMNS)
+
+
+def evaluate_plate_video(
+    ground_truth: pd.DataFrame,
+    candidates: pd.DataFrame,
+    track: pd.DataFrame | None,
+    *,
+    frame_count: int,
+    fps: float,
+    iou_threshold: float = 0.5,
+    missing_track_reason: str = "no_confirmed_track",
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """수동 원판 bbox와 후보·track을 비교해 영상별 지표를 만든다."""
+    required_ground_truth = {
+        "video_id", "frame_index", "plate_present", "plate_bbox_x",
+        "plate_bbox_y", "plate_bbox_width", "plate_bbox_height",
+    }
+    missing_columns = sorted(required_ground_truth - set(ground_truth.columns))
+    if missing_columns:
+        raise ValueError("plate ground truth columns missing: " + ", ".join(missing_columns))
+    if ground_truth.empty or ground_truth["video_id"].astype(str).nunique() != 1:
+        raise ValueError("plate ground truth must contain exactly one video_id")
+    if ground_truth.duplicated(["video_id", "frame_index"]).any():
+        raise ValueError("plate ground truth has duplicate video/frame keys")
+    if frame_count <= 0 or fps <= 0:
+        raise ValueError("frame_count와 fps는 양수여야 합니다.")
+    if not 0 < iou_threshold <= 1:
+        raise ValueError("iou_threshold는 0보다 크고 1 이하여야 합니다.")
+    if not str(missing_track_reason).strip():
+        raise ValueError("missing_track_reason은 비어 있을 수 없습니다.")
+
+    video_id = str(ground_truth.iloc[0]["video_id"])
+    if track is None:
+        track = pd.DataFrame(
+            [
+                _empty_plate_track_row(
+                    video_id,
+                    frame_index,
+                    frame_index / fps,
+                    "not_available",
+                    str(missing_track_reason).strip(),
+                )
+                for frame_index in range(frame_count)
+            ],
+            columns=PLATE_TRACK_COLUMNS,
+        )
+    _validate_plate_table(candidates, PLATE_CANDIDATE_COLUMNS, "후보")
+    _validate_plate_table(track, PLATE_TRACK_COLUMNS, "track")
+    _validate_evaluation_video_rows(candidates, video_id, frame_count, "후보")
+    _validate_evaluation_video_rows(track, video_id, frame_count, "track")
+    if set(track["frame_index"].astype(int)) != set(range(frame_count)):
+        raise ValueError("원판 track은 전체 frame을 포함해야 합니다.")
+
+    candidates_by_frame = {
+        int(frame_index): frame
+        for frame_index, frame in candidates.groupby("frame_index", sort=False)
+    }
+    track_by_frame = track.set_index("frame_index", drop=False)
+    rows = []
+    for truth in ground_truth.sort_values("frame_index").itertuples(index=False):
+        frame_index = int(truth.frame_index)
+        if not 0 <= frame_index < frame_count:
+            raise ValueError("plate ground truth frame이 영상 범위를 벗어났습니다.")
+        plate_present = str(truth.plate_present).lower()
+        if plate_present not in {"yes", "no"}:
+            raise ValueError("plate_present는 yes/no만 허용합니다.")
+        if plate_present == "no":
+            rows.append(
+                {
+                    "video_id": video_id,
+                    "frame_index": frame_index,
+                    "timestamp_seconds": frame_index / fps,
+                    "plate_present": "no",
+                    "ground_truth_bbox_x1": math.nan,
+                    "ground_truth_bbox_y1": math.nan,
+                    "ground_truth_bbox_x2": math.nan,
+                    "ground_truth_bbox_y2": math.nan,
+                    "candidate_count": 0,
+                    "candidate_best_id": math.nan,
+                    "candidate_best_iou": math.nan,
+                    "candidate_outcome": "not_applicable",
+                    "track_bbox_x1": math.nan,
+                    "track_bbox_y1": math.nan,
+                    "track_bbox_x2": math.nan,
+                    "track_bbox_y2": math.nan,
+                    "track_status": "not_available",
+                    "track_reason": "no_plate",
+                    "track_iou": math.nan,
+                    "normalized_center_error": math.nan,
+                    "track_outcome": "not_applicable",
+                }
+            )
+            continue
+        ground_truth_bbox = (
+            float(truth.plate_bbox_x),
+            float(truth.plate_bbox_y),
+            float(truth.plate_bbox_x + truth.plate_bbox_width),
+            float(truth.plate_bbox_y + truth.plate_bbox_height),
+        )
+        _validate_xyxy_bbox(ground_truth_bbox, "ground truth")
+
+        frame_candidates = candidates_by_frame.get(frame_index, candidates.iloc[0:0])
+        candidate_matches = [
+            (
+                _bbox_iou(
+                    ground_truth_bbox,
+                    tuple(float(candidate[column]) for column in ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")),
+                ),
+                int(candidate["candidate_id"]),
+            )
+            for _, candidate in frame_candidates.iterrows()
+        ]
+        best_iou, best_candidate_id = max(candidate_matches, default=(math.nan, math.nan))
+        candidate_outcome = (
+            "missing" if not candidate_matches
+            else "correct" if best_iou >= iou_threshold
+            else "wrong_target"
+        )
+
+        selected = track_by_frame.loc[frame_index]
+        if str(selected["status"]) == "ok":
+            track_bbox = tuple(
+                float(selected[column])
+                for column in ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")
+            )
+            _validate_xyxy_bbox(track_bbox, "track")
+            track_iou = _bbox_iou(ground_truth_bbox, track_bbox)
+            normalized_center_error = _normalized_center_error(
+                ground_truth_bbox, track_bbox
+            )
+            track_outcome = "correct" if track_iou >= iou_threshold else "wrong_target"
+        else:
+            track_bbox = (math.nan,) * 4
+            track_iou = math.nan
+            normalized_center_error = math.nan
+            track_outcome = "missing"
+
+        rows.append(
+            {
+                "video_id": video_id,
+                "frame_index": frame_index,
+                "timestamp_seconds": frame_index / fps,
+                "plate_present": "yes",
+                "ground_truth_bbox_x1": ground_truth_bbox[0],
+                "ground_truth_bbox_y1": ground_truth_bbox[1],
+                "ground_truth_bbox_x2": ground_truth_bbox[2],
+                "ground_truth_bbox_y2": ground_truth_bbox[3],
+                "candidate_count": len(frame_candidates),
+                "candidate_best_id": best_candidate_id,
+                "candidate_best_iou": best_iou,
+                "candidate_outcome": candidate_outcome,
+                "track_bbox_x1": track_bbox[0],
+                "track_bbox_y1": track_bbox[1],
+                "track_bbox_x2": track_bbox[2],
+                "track_bbox_y2": track_bbox[3],
+                "track_status": str(selected["status"]),
+                "track_reason": str(selected["reason"]),
+                "track_iou": track_iou,
+                "normalized_center_error": normalized_center_error,
+                "track_outcome": track_outcome,
+            }
+        )
+
+    frame_evaluation = pd.DataFrame(rows)
+    applicable = frame_evaluation.loc[frame_evaluation["plate_present"] == "yes"]
+    if applicable.empty:
+        return frame_evaluation, {
+            "video_id": video_id,
+            "total_frame_count": frame_count,
+            "plate_applicable_frame_count": 0,
+            "track_ok_frame_count": 0,
+            "plate_ok_rate": math.nan,
+            "plate_non_ok_rate": math.nan,
+            "longest_non_ok_gap_frames": math.nan,
+            "longest_non_ok_gap_seconds": math.nan,
+            "ground_truth_frame_count": 0,
+            "candidate_correct_count": 0,
+            "candidate_recall": math.nan,
+            "track_detected_ground_truth_frame_count": 0,
+            "track_correct_count": 0,
+            "track_correct_rate": math.nan,
+            "wrong_target_count": 0,
+            "wrong_target_rate": math.nan,
+            "mean_normalized_center_error": math.nan,
+        }
+    ok_frames = track["status"].astype(str).eq("ok")
+    detected_ground_truth = applicable["track_outcome"] != "missing"
+    candidate_correct_count = int(applicable["candidate_outcome"].eq("correct").sum())
+    track_correct_count = int(applicable["track_outcome"].eq("correct").sum())
+    wrong_target_count = int(applicable["track_outcome"].eq("wrong_target").sum())
+    detected_count = int(detected_ground_truth.sum())
+    ground_truth_count = len(applicable)
+    longest_gap = _longest_false_run(ok_frames.tolist())
+    summary = {
+        "video_id": video_id,
+        "total_frame_count": frame_count,
+        "plate_applicable_frame_count": frame_count,
+        "track_ok_frame_count": int(ok_frames.sum()),
+        "plate_ok_rate": float(ok_frames.mean()),
+        "plate_non_ok_rate": float((~ok_frames).mean()),
+        "longest_non_ok_gap_frames": longest_gap,
+        "longest_non_ok_gap_seconds": longest_gap / fps,
+        "ground_truth_frame_count": ground_truth_count,
+        "candidate_correct_count": candidate_correct_count,
+        "candidate_recall": candidate_correct_count / ground_truth_count,
+        "track_detected_ground_truth_frame_count": detected_count,
+        "track_correct_count": track_correct_count,
+        "track_correct_rate": track_correct_count / ground_truth_count,
+        "wrong_target_count": wrong_target_count,
+        "wrong_target_rate": wrong_target_count / detected_count if detected_count else math.nan,
+        "mean_normalized_center_error": float(
+            applicable["normalized_center_error"].mean()
+        ),
+    }
+    return frame_evaluation, summary
+
+
+def aggregate_plate_evaluations(per_video: pd.DataFrame) -> dict[str, Any]:
+    """영상별 count를 합산해 전체 threshold 지표를 계산한다."""
+    count_columns = (
+        "total_frame_count", "plate_applicable_frame_count",
+        "track_ok_frame_count", "ground_truth_frame_count",
+        "candidate_correct_count", "track_detected_ground_truth_frame_count",
+        "track_correct_count", "wrong_target_count",
+    )
+    required_columns = set(count_columns) | {
+        "video_id", "longest_non_ok_gap_frames", "longest_non_ok_gap_seconds",
+        "mean_normalized_center_error",
+    }
+    missing_columns = sorted(required_columns - set(per_video.columns))
+    if missing_columns:
+        raise ValueError("plate evaluation columns missing: " + ", ".join(missing_columns))
+    if per_video.empty:
+        raise ValueError("plate evaluation summary is empty")
+
+    counts = {
+        column: int(pd.to_numeric(per_video[column], errors="raise").sum())
+        for column in count_columns
+    }
+    applicable_frames = counts["plate_applicable_frame_count"]
+    ground_truth_frames = counts["ground_truth_frame_count"]
+    detected_frames = counts["track_detected_ground_truth_frame_count"]
+    center_errors = pd.to_numeric(
+        per_video["mean_normalized_center_error"], errors="coerce"
+    )
+    center_weights = pd.to_numeric(
+        per_video["track_detected_ground_truth_frame_count"], errors="raise"
+    )
+    usable_center_errors = center_errors.notna() & center_weights.gt(0)
+    weighted_center_error = (
+        float(
+            (center_errors[usable_center_errors] * center_weights[usable_center_errors]).sum()
+            / center_weights[usable_center_errors].sum()
+        )
+        if usable_center_errors.any()
+        else math.nan
+    )
+    gap_frames = pd.to_numeric(per_video["longest_non_ok_gap_frames"], errors="coerce")
+    gap_seconds = pd.to_numeric(per_video["longest_non_ok_gap_seconds"], errors="coerce")
+    return {
+        "video_id": "ALL",
+        "video_count": int(per_video["video_id"].astype(str).nunique()),
+        **counts,
+        "plate_ok_rate": counts["track_ok_frame_count"] / applicable_frames
+        if applicable_frames else math.nan,
+        "plate_non_ok_rate": 1 - counts["track_ok_frame_count"] / applicable_frames
+        if applicable_frames else math.nan,
+        "longest_non_ok_gap_frames": int(gap_frames.max()) if gap_frames.notna().any() else math.nan,
+        "longest_non_ok_gap_seconds": float(gap_seconds.max()) if gap_seconds.notna().any() else math.nan,
+        "candidate_recall": counts["candidate_correct_count"] / ground_truth_frames if ground_truth_frames else math.nan,
+        "track_correct_rate": counts["track_correct_count"] / ground_truth_frames if ground_truth_frames else math.nan,
+        "wrong_target_rate": counts["wrong_target_count"] / detected_frames if detected_frames else math.nan,
+        "mean_normalized_center_error": weighted_center_error,
+    }
+
+
+def save_plate_evaluation_results(
+    frame_evaluation: pd.DataFrame,
+    comparison: pd.DataFrame,
+    output_root: str | Path,
+) -> None:
+    """원판 frame 평가와 threshold 비교표를 함께 저장한다."""
+    output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    _write_csv_atomically(
+        frame_evaluation, output_root / "plate_frame_evaluation.csv"
+    )
+    _write_csv_atomically(
+        comparison, output_root / "plate_threshold_comparison.csv"
+    )
+
+
+def _validate_evaluation_video_rows(
+    table: pd.DataFrame,
+    video_id: str,
+    frame_count: int,
+    table_name: str,
+) -> None:
+    if table.empty:
+        return
+    if set(table["video_id"].astype(str)) != {video_id}:
+        raise ValueError(f"원판 {table_name} video_id가 정답과 다릅니다.")
+    frame_indices = pd.to_numeric(table["frame_index"], errors="coerce")
+    if frame_indices.isna().any() or (frame_indices < 0).any() or (frame_indices >= frame_count).any():
+        raise ValueError(f"원판 {table_name} frame이 영상 범위를 벗어났습니다.")
+
+
+def _validate_xyxy_bbox(bbox: tuple[float, float, float, float], name: str) -> None:
+    x1, y1, x2, y2 = bbox
+    if not all(math.isfinite(value) for value in bbox) or x2 <= x1 or y2 <= y1:
+        raise ValueError(f"{name} bbox가 유효하지 않습니다.")
+
+
+def _bbox_iou(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    intersection_width = max(0.0, min(first[2], second[2]) - max(first[0], second[0]))
+    intersection_height = max(0.0, min(first[3], second[3]) - max(first[1], second[1]))
+    intersection = intersection_width * intersection_height
+    first_area = (first[2] - first[0]) * (first[3] - first[1])
+    second_area = (second[2] - second[0]) * (second[3] - second[1])
+    return intersection / (first_area + second_area - intersection)
+
+
+def _normalized_center_error(
+    ground_truth_bbox: tuple[float, float, float, float],
+    predicted_bbox: tuple[float, float, float, float],
+) -> float:
+    ground_truth_center = (
+        (ground_truth_bbox[0] + ground_truth_bbox[2]) / 2.0,
+        (ground_truth_bbox[1] + ground_truth_bbox[3]) / 2.0,
+    )
+    predicted_center = (
+        (predicted_bbox[0] + predicted_bbox[2]) / 2.0,
+        (predicted_bbox[1] + predicted_bbox[3]) / 2.0,
+    )
+    diagonal = math.hypot(
+        ground_truth_bbox[2] - ground_truth_bbox[0],
+        ground_truth_bbox[3] - ground_truth_bbox[1],
+    )
+    return math.dist(ground_truth_center, predicted_center) / diagonal
+
+
+def _longest_false_run(values: list[bool]) -> int:
+    longest = current = 0
+    for value in values:
+        current = 0 if value else current + 1
+        longest = max(longest, current)
+    return longest
 
 
 def _validate_plate_table(

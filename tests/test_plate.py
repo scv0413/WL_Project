@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
+import snatch_analysis.plate as plate_module
 from snatch_analysis.plate import (
     PILOT_GROUND_TRUTH_COLUMNS,
     PLATE_CANDIDATE_COLUMNS,
@@ -390,6 +391,311 @@ def _plate_candidates(rows: list[dict[str, float | int | str]]) -> pd.DataFrame:
 
 
 class PlateTrackingTests(unittest.TestCase):
+    def test_infers_plate_candidates_with_streaming_results(self) -> None:
+        runner = getattr(plate_module, "infer_plate_video_candidates", None)
+        self.assertTrue(callable(runner), "infer_plate_video_candidates is missing")
+
+        class FakePlateModel:
+            def __init__(self) -> None:
+                self.call = None
+
+            def predict(self, **kwargs):
+                self.call = kwargs
+                return iter(
+                    [
+                        _FakeResult(
+                            np.array([[10.0, 10.0, 30.0, 30.0]]),
+                            np.array([0.9]),
+                        ),
+                        _FakeResult(
+                            np.array([[12.0, 10.0, 32.0, 30.0]]),
+                            np.array([0.8]),
+                        ),
+                    ]
+                )
+
+        model = FakePlateModel()
+        candidates, processed_frame_count = runner(
+            model,
+            video_path=Path("video.mp4"),
+            video_id="a01_sn_f_01",
+            frame_count=2,
+            fps=30.0,
+            image_width=100,
+            image_height=50,
+            image_size=320,
+            confidence=0.25,
+            device="cpu",
+        )
+
+        self.assertEqual(processed_frame_count, 2)
+        self.assertTrue(model.call["stream"])
+        self.assertEqual(model.call["imgsz"], 320)
+        self.assertEqual(candidates["frame_index"].tolist(), [0, 1])
+        self.assertEqual(candidates["center_x_px"].tolist(), [20.0, 22.0])
+
+    def test_rejects_plate_stream_frame_count_mismatch(self) -> None:
+        class ShortPlateModel:
+            def predict(self, **kwargs):
+                return iter([
+                    _FakeResult(
+                        np.array([[10.0, 10.0, 30.0, 30.0]]),
+                        np.array([0.9]),
+                    )
+                ])
+
+        with self.assertRaisesRegex(
+            RuntimeError, "expected=2, actual=1"
+        ):
+            plate_module.infer_plate_video_candidates(
+                ShortPlateModel(),
+                video_path=Path("short.mp4"),
+                video_id="a01_sn_f_01",
+                frame_count=2,
+                fps=30.0,
+                image_width=100,
+                image_height=50,
+                image_size=320,
+                confidence=0.25,
+                device="cpu",
+            )
+
+    def test_evaluates_candidate_track_and_gap_against_manual_bboxes(self) -> None:
+        evaluator = getattr(plate_module, "evaluate_plate_video", None)
+        self.assertTrue(callable(evaluator), "evaluate_plate_video is missing")
+        ground_truth = pd.DataFrame(
+            {
+                "video_id": ["a01_sn_f_01", "a01_sn_f_01"],
+                "frame_index": [0, 1],
+                "plate_present": ["yes", "yes"],
+                "plate_bbox_x": [0.0, 0.0],
+                "plate_bbox_y": [0.0, 0.0],
+                "plate_bbox_width": [10.0, 10.0],
+                "plate_bbox_height": [10.0, 10.0],
+            }
+        )
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 20.0, "bbox_y1": 20.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.9,
+                    "center_x_px": 25.0, "center_y_px": 25.0,
+                    "center_x_normalized": 0.25, "center_y_normalized": 0.25,
+                },
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 1,
+                    "bbox_x1": 0.0, "bbox_y1": 0.0, "bbox_x2": 10.0,
+                    "bbox_y2": 10.0, "bbox_confidence": 0.8,
+                    "center_x_px": 5.0, "center_y_px": 5.0,
+                    "center_x_normalized": 0.05, "center_y_normalized": 0.05,
+                },
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 1,
+                    "timestamp_seconds": 0.1, "candidate_id": 0,
+                    "bbox_x1": 20.0, "bbox_y1": 20.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.7,
+                    "center_x_px": 25.0, "center_y_px": 25.0,
+                    "center_x_normalized": 0.25, "center_y_normalized": 0.25,
+                },
+            ]
+        )
+        track = pd.DataFrame(
+            [
+                {**candidates.iloc[1].to_dict(), "status": "ok", "reason": ""},
+                {**candidates.iloc[2].to_dict(), "status": "ok", "reason": ""},
+                {
+                    **{column: np.nan for column in PLATE_CANDIDATE_COLUMNS},
+                    "video_id": "a01_sn_f_01", "frame_index": 2,
+                    "timestamp_seconds": 0.2, "status": "missing",
+                    "reason": "no_detection",
+                },
+            ],
+            columns=PLATE_TRACK_COLUMNS,
+        )
+
+        frame_evaluation, summary = evaluator(
+            ground_truth,
+            candidates,
+            track,
+            frame_count=3,
+            fps=10.0,
+            iou_threshold=0.5,
+        )
+
+        self.assertEqual(frame_evaluation["candidate_outcome"].tolist(), ["correct", "wrong_target"])
+        self.assertEqual(frame_evaluation["track_outcome"].tolist(), ["correct", "wrong_target"])
+        self.assertEqual(frame_evaluation["candidate_best_id"].tolist(), [1, 0])
+        self.assertAlmostEqual(frame_evaluation.loc[1, "normalized_center_error"], 2.0)
+        self.assertEqual(summary["track_ok_frame_count"], 2)
+        self.assertAlmostEqual(summary["plate_ok_rate"], 2 / 3)
+        self.assertEqual(summary["longest_non_ok_gap_frames"], 1)
+        self.assertAlmostEqual(summary["longest_non_ok_gap_seconds"], 0.1)
+        self.assertAlmostEqual(summary["candidate_recall"], 0.5)
+        self.assertAlmostEqual(summary["track_correct_rate"], 0.5)
+        self.assertAlmostEqual(summary["wrong_target_rate"], 0.5)
+
+    def test_evaluates_missing_candidates_and_track_without_fabricating_values(self) -> None:
+        evaluator = getattr(plate_module, "evaluate_plate_video", None)
+        self.assertTrue(callable(evaluator), "evaluate_plate_video is missing")
+        ground_truth = pd.DataFrame(
+            {
+                "video_id": ["a01_sn_f_01"],
+                "frame_index": [1],
+                "plate_present": ["yes"],
+                "plate_bbox_x": [0.0],
+                "plate_bbox_y": [0.0],
+                "plate_bbox_width": [10.0],
+                "plate_bbox_height": [10.0],
+            }
+        )
+
+        try:
+            frame_evaluation, summary = evaluator(
+                ground_truth,
+                pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS),
+                None,
+                frame_count=3,
+                fps=10.0,
+                iou_threshold=0.5,
+                missing_track_reason="primary_plate_not_detected",
+            )
+        except Exception as error:
+            self.fail(f"missing track must be measurable, got {type(error).__name__}: {error}")
+
+        self.assertEqual(frame_evaluation.loc[0, "candidate_outcome"], "missing")
+        self.assertEqual(frame_evaluation.loc[0, "track_outcome"], "missing")
+        self.assertEqual(
+            frame_evaluation.loc[0, "track_reason"],
+            "primary_plate_not_detected",
+        )
+        self.assertTrue(pd.isna(frame_evaluation.loc[0, "track_iou"]))
+        self.assertEqual(summary["track_ok_frame_count"], 0)
+        self.assertEqual(summary["longest_non_ok_gap_frames"], 3)
+        self.assertEqual(summary["candidate_recall"], 0.0)
+        self.assertTrue(pd.isna(summary["wrong_target_rate"]))
+
+    def test_marks_plate_metrics_not_applicable_for_no_plate_video(self) -> None:
+        evaluator = getattr(plate_module, "evaluate_plate_video", None)
+        self.assertTrue(callable(evaluator), "evaluate_plate_video is missing")
+        ground_truth = pd.DataFrame(
+            {
+                "video_id": ["a01_sn_f_01"],
+                "frame_index": [0],
+                "plate_present": ["no"],
+                "plate_bbox_x": [np.nan],
+                "plate_bbox_y": [np.nan],
+                "plate_bbox_width": [np.nan],
+                "plate_bbox_height": [np.nan],
+            }
+        )
+
+        try:
+            frame_evaluation, summary = evaluator(
+                ground_truth,
+                pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS),
+                None,
+                frame_count=2,
+                fps=10.0,
+            )
+        except Exception as error:
+            self.fail(f"no-plate video must be N/A, got {type(error).__name__}: {error}")
+
+        self.assertEqual(frame_evaluation.loc[0, "track_outcome"], "not_applicable")
+        self.assertTrue(pd.isna(summary["plate_ok_rate"]))
+        self.assertTrue(pd.isna(summary["candidate_recall"]))
+        self.assertTrue(pd.isna(summary["track_correct_rate"]))
+        self.assertEqual(summary["plate_applicable_frame_count"], 0)
+
+    def test_aggregate_excludes_no_plate_video_from_track_coverage(self) -> None:
+        per_video = pd.DataFrame(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "total_frame_count": 3,
+                    "plate_applicable_frame_count": 3,
+                    "track_ok_frame_count": 2, "longest_non_ok_gap_frames": 1,
+                    "longest_non_ok_gap_seconds": 0.1, "ground_truth_frame_count": 1,
+                    "candidate_correct_count": 1,
+                    "track_detected_ground_truth_frame_count": 1,
+                    "track_correct_count": 1, "wrong_target_count": 0,
+                    "mean_normalized_center_error": 0.0,
+                },
+                {
+                    "video_id": "c01_sn_f_01", "total_frame_count": 2,
+                    "plate_applicable_frame_count": 0,
+                    "track_ok_frame_count": 0, "longest_non_ok_gap_frames": np.nan,
+                    "longest_non_ok_gap_seconds": np.nan, "ground_truth_frame_count": 0,
+                    "candidate_correct_count": 0,
+                    "track_detected_ground_truth_frame_count": 0,
+                    "track_correct_count": 0, "wrong_target_count": 0,
+                    "mean_normalized_center_error": np.nan,
+                },
+            ]
+        )
+
+        overall = plate_module.aggregate_plate_evaluations(per_video)
+
+        self.assertEqual(overall["total_frame_count"], 5)
+        self.assertEqual(overall["plate_applicable_frame_count"], 3)
+        self.assertAlmostEqual(overall["plate_ok_rate"], 2 / 3)
+
+    def test_aggregates_threshold_metrics_from_counts_not_rate_averages(self) -> None:
+        aggregator = getattr(plate_module, "aggregate_plate_evaluations", None)
+        self.assertTrue(callable(aggregator), "aggregate_plate_evaluations is missing")
+        per_video = pd.DataFrame(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "total_frame_count": 3,
+                    "plate_applicable_frame_count": 3,
+                    "track_ok_frame_count": 2, "longest_non_ok_gap_frames": 1,
+                    "longest_non_ok_gap_seconds": 0.1, "ground_truth_frame_count": 2,
+                    "candidate_correct_count": 1,
+                    "track_detected_ground_truth_frame_count": 2,
+                    "track_correct_count": 1, "wrong_target_count": 1,
+                    "mean_normalized_center_error": 1.0,
+                },
+                {
+                    "video_id": "b01_sn_f_01", "total_frame_count": 2,
+                    "plate_applicable_frame_count": 2,
+                    "track_ok_frame_count": 0, "longest_non_ok_gap_frames": 2,
+                    "longest_non_ok_gap_seconds": 0.2, "ground_truth_frame_count": 1,
+                    "candidate_correct_count": 0,
+                    "track_detected_ground_truth_frame_count": 0,
+                    "track_correct_count": 0, "wrong_target_count": 0,
+                    "mean_normalized_center_error": np.nan,
+                },
+            ]
+        )
+
+        overall = aggregator(per_video)
+
+        self.assertEqual(overall["video_id"], "ALL")
+        self.assertEqual(overall["video_count"], 2)
+        self.assertAlmostEqual(overall["plate_ok_rate"], 0.4)
+        self.assertEqual(overall["longest_non_ok_gap_frames"], 2)
+        self.assertAlmostEqual(overall["candidate_recall"], 1 / 3)
+        self.assertAlmostEqual(overall["track_correct_rate"], 1 / 3)
+        self.assertAlmostEqual(overall["wrong_target_rate"], 0.5)
+        self.assertAlmostEqual(overall["mean_normalized_center_error"], 1.0)
+
+    def test_saves_plate_evaluation_tables_through_public_api(self) -> None:
+        saver = getattr(plate_module, "save_plate_evaluation_results", None)
+        self.assertTrue(callable(saver), "save_plate_evaluation_results is missing")
+        frames = pd.DataFrame({"video_id": ["a01_sn_f_01"], "frame_index": [0]})
+        comparison = pd.DataFrame({"experiment_id": ["conf010"]})
+
+        with TemporaryDirectory() as temporary_directory:
+            output_root = Path(temporary_directory)
+            saver(frames, comparison, output_root)
+
+            saved_frames = pd.read_csv(output_root / "plate_frame_evaluation.csv")
+            saved_comparison = pd.read_csv(output_root / "plate_threshold_comparison.csv")
+
+        pd.testing.assert_frame_equal(saved_frames, frames)
+        pd.testing.assert_frame_equal(saved_comparison, comparison)
+
     def test_tracking_accepts_object_typed_numeric_candidates_from_empty_frame_concat(self) -> None:
         candidates = _plate_candidates(
             [

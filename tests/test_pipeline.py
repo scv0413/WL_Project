@@ -15,6 +15,13 @@ from snatch_analysis.pipeline import (
     run_fusion,
     summarize_pose_keypoints,
 )
+from snatch_analysis.plate import (
+    PLATE_CANDIDATE_COLUMNS,
+    PLATE_TRACK_COLUMNS,
+    aggregate_plate_evaluations,
+    evaluate_plate_video,
+    save_plate_evaluation_results,
+)
 from snatch_analysis.visualization import (
     save_angle_plot,
     save_plate_trajectory_plot,
@@ -93,6 +100,190 @@ def _write_overlay_inputs(root: Path) -> tuple[Path, Path, Path]:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_u9_notebook_saves_threshold_comparison_from_stored_artifacts(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/05_feedback_evaluation.ipynb").read_text(encoding="utf-8")
+        )
+        source_by_id = {
+            cell.get("id"): "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        }
+        evaluation_source = source_by_id.get("u9-threshold-evaluation")
+        self.assertTrue(evaluation_source, "u9-threshold-evaluation cell is missing")
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validator_calls = []
+            ground_truth_path = root / "ground_truth.csv"
+            pd.DataFrame(
+                {
+                    "video_id": ["a01_sn_f_01"], "frame_index": [0],
+                    "plate_present": ["yes"], "plate_bbox_x": [0.0],
+                    "plate_bbox_y": [0.0], "plate_bbox_width": [10.0],
+                    "plate_bbox_height": [10.0],
+                }
+            ).to_csv(ground_truth_path, index=False)
+            experiments = {}
+            for experiment_id, confidence in (("conf025", 0.25), ("conf010", 0.10)):
+                artifact_root = root / experiment_id
+                video_root = artifact_root / "a01_sn_f_01"
+                video_root.mkdir(parents=True)
+                candidates = pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS)
+                if experiment_id == "conf010":
+                    candidates = pd.DataFrame(
+                        [{
+                            "video_id": "a01_sn_f_01", "frame_index": 0,
+                            "timestamp_seconds": 0.0, "candidate_id": 0,
+                            "bbox_x1": 0.0, "bbox_y1": 0.0, "bbox_x2": 10.0,
+                            "bbox_y2": 10.0, "bbox_confidence": 0.2,
+                            "center_x_px": 5.0, "center_y_px": 5.0,
+                            "center_x_normalized": 0.05,
+                            "center_y_normalized": 0.05,
+                        }],
+                        columns=PLATE_CANDIDATE_COLUMNS,
+                    )
+                    track = pd.DataFrame(
+                        [
+                            {**candidates.iloc[0].to_dict(), "status": "ok", "reason": ""},
+                            {
+                                **{column: np.nan for column in PLATE_CANDIDATE_COLUMNS},
+                                "video_id": "a01_sn_f_01", "frame_index": 1,
+                                "timestamp_seconds": 0.1, "status": "missing",
+                                "reason": "no_detection",
+                            },
+                        ],
+                        columns=PLATE_TRACK_COLUMNS,
+                    )
+                    track.to_csv(video_root / "plate_track.csv", index=False)
+                candidates.to_csv(video_root / "plate_candidates.csv", index=False)
+                (video_root / "run_summary.json").write_text(
+                    json.dumps({
+                        "device": {"actual_device": "cpu"},
+                        "plate": {
+                            "status": "complete",
+                            "track_status": (
+                                "complete" if experiment_id == "conf010"
+                                else "not_available"
+                            ),
+                            "track_reason": (
+                                "" if experiment_id == "conf010"
+                                else "primary_plate_not_detected"
+                            ),
+                            "model": "plate.pt",
+                            "weights_sha256": "a" * 64,
+                            "image_size": 320,
+                            "processed_frame_count": 2,
+                            "confidence": confidence,
+                            "elapsed_seconds": confidence,
+                        },
+                    }),
+                    encoding="utf-8",
+                )
+                experiments[experiment_id] = {
+                    "expected_confidence": confidence,
+                    "artifact_root": artifact_root,
+                }
+
+            output_root = root / "evaluation"
+            namespace = {
+                "RUN_U9_THRESHOLD_EVALUATION": True,
+                "PLATE_EVALUATION_IOU_THRESHOLD": 0.5,
+                "U9_GROUND_TRUTH_PATH": ground_truth_path,
+                "THRESHOLD_EVALUATION_ROOT": output_root,
+                "THRESHOLD_EXPERIMENTS": experiments,
+                "evaluation_split": pd.DataFrame(),
+                "pilot_rows": pd.DataFrame([{
+                    "video_id": "a01_sn_f_01", "group": "A",
+                    "frame_count": 2, "fps": 10.0,
+                }]),
+                "pd": pd,
+                "json": json,
+                "Path": Path,
+                "evaluate_plate_video": evaluate_plate_video,
+                "aggregate_plate_evaluations": aggregate_plate_evaluations,
+                "validate_pilot_ground_truth": lambda table, split: (
+                    validator_calls.append(True) or table
+                ),
+                "save_plate_evaluation_results": save_plate_evaluation_results,
+                "display": lambda _: None,
+            }
+            exec(compile(evaluation_source, "u9-threshold-evaluation", "exec"), namespace)
+
+            comparison = pd.read_csv(output_root / "plate_threshold_comparison.csv")
+            frames = pd.read_csv(output_root / "plate_frame_evaluation.csv")
+
+            conf010_track = pd.read_csv(
+                root / "conf010/a01_sn_f_01/plate_track.csv"
+            )
+            stale_track_path = root / "conf025/a01_sn_f_01/plate_track.csv"
+            conf010_track.to_csv(stale_track_path, index=False)
+            with self.assertRaisesRegex(ValueError, "stale track"):
+                exec(compile(evaluation_source, "u9-threshold-evaluation", "exec"), namespace)
+            stale_track_path.unlink()
+
+            conf025_summary_path = root / "conf025/a01_sn_f_01/run_summary.json"
+            conf025_summary = json.loads(conf025_summary_path.read_text(encoding="utf-8"))
+            conf025_summary["plate"]["track_status"] = "awaiting_confirmation"
+            conf025_summary_path.write_text(json.dumps(conf025_summary), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "track 확정"):
+                exec(compile(evaluation_source, "u9-threshold-evaluation", "exec"), namespace)
+
+            conf025_summary["plate"]["track_status"] = "not_available"
+            conf025_summary["plate"]["track_reason"] = "primary_plate_not_detected"
+            conf025_summary["plate"]["image_size"] = 640
+            conf025_summary_path.write_text(json.dumps(conf025_summary), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "비교 조건"):
+                exec(compile(evaluation_source, "u9-threshold-evaluation", "exec"), namespace)
+
+            conf025_summary["plate"]["image_size"] = 320
+            conf025_summary["plate"].pop("weights_sha256")
+            conf025_summary_path.write_text(json.dumps(conf025_summary), encoding="utf-8")
+            conf010_summary_path = root / "conf010/a01_sn_f_01/run_summary.json"
+            conf010_summary = json.loads(conf010_summary_path.read_text(encoding="utf-8"))
+            conf010_summary["plate"].pop("weights_sha256")
+            conf010_summary_path.write_text(json.dumps(conf010_summary), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "weights_sha256"):
+                exec(compile(evaluation_source, "u9-threshold-evaluation", "exec"), namespace)
+
+        overall = comparison.loc[comparison["video_id"] == "ALL"].set_index("experiment_id")
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(overall.loc["conf025", "candidate_recall"], 0.0)
+        self.assertEqual(overall.loc["conf010", "candidate_recall"], 1.0)
+        self.assertEqual(overall.loc["conf010", "track_correct_rate"], 1.0)
+        self.assertEqual(overall.loc["conf010", "confidence_threshold"], 0.1)
+        self.assertEqual(overall.loc["conf010", "provenance_status"], "verified")
+        self.assertTrue(validator_calls)
+
+    def test_u9_baseline_notebook_streams_three_pilots_with_two_models(self) -> None:
+        notebook_path = Path("notebooks/05_feedback_evaluation.ipynb")
+        self.assertTrue(notebook_path.exists(), "05_feedback_evaluation.ipynb is missing")
+        notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+        code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+        source = "\n".join("".join(cell["source"]) for cell in code_cells)
+        cell_index_by_id = {
+            cell["id"]: index for index, cell in enumerate(code_cells)
+        }
+
+        self.assertTrue(all(cell["execution_count"] is None for cell in code_cells))
+        self.assertTrue(all(cell["outputs"] == [] for cell in code_cells))
+        self.assertEqual(source.count("YOLO("), 2)
+        self.assertIn("infer_pose_video_candidates(", source)
+        self.assertIn("infer_plate_video_candidates(", source)
+        self.assertIn("select_primary_lifter_track(", source)
+        self.assertIn("if video_id not in PRIMARY_PLATE_CHOICES:", source)
+        self.assertIn("primary_plate_not_detected", source)
+        self.assertIn("ARTIFACT_ROOT", source)
+        self.assertIn('"u9_baseline"', source)
+        self.assertLess(
+            cell_index_by_id["u9-raw-pilot-review"],
+            cell_index_by_id["u9-candidate-inference"],
+        )
+        self.assertIn("validate_pilot_ground_truth(", source)
+        self.assertIn("save_plate_evaluation_results(", source)
+        self.assertIn("plate_track.csv", source)
+        self.assertIn("unlink(missing_ok=True)", source)
+        self.assertIn("comparison_condition", source)
+
     def test_fusion_left_joins_every_frame_basis_row(self) -> None:
         result = fuse_frame_analysis(_basis(), _phase(), _pose(), _angles(), _plate())
 

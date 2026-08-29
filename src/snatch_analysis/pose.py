@@ -16,8 +16,6 @@ from snatch_analysis.geometry import (
     calculate_internal_angle,
     calculate_trunk_inclination,
 )
-
-
 COCO_KEYPOINT_NAMES = (
     "nose",
     "left_eye",
@@ -253,6 +251,52 @@ def pose_result_to_candidates(
                 }
             )
     return pd.DataFrame(rows, columns=POSE_CANDIDATE_COLUMNS)
+
+
+def infer_pose_video_candidates(
+    model: Any,
+    *,
+    video_path: str | Path,
+    video_id: str,
+    frame_count: int,
+    fps: float,
+    image_size: int,
+    confidence: float,
+    device: str,
+) -> tuple[pd.DataFrame, int]:
+    """Ultralytics stream 결과를 Pose 후보 표로 변환한다."""
+    if fps <= 0:
+        raise ValueError("fps는 양수여야 합니다.")
+    frame_tables = []
+    results = model.predict(
+        source=str(video_path),
+        stream=True,
+        imgsz=image_size,
+        conf=confidence,
+        device=device,
+        verbose=False,
+    )
+    for frame_index, result in enumerate(results):
+        frame_tables.append(
+            pose_result_to_candidates(
+                result,
+                video_id,
+                frame_index,
+                frame_index / fps,
+            )
+        )
+    processed_frame_count = len(frame_tables)
+    if processed_frame_count != frame_count:
+        raise RuntimeError(
+            "Pose processed frame count mismatch: "
+            f"expected={frame_count}, actual={processed_frame_count}"
+        )
+    return (
+        pd.concat(frame_tables, ignore_index=True)
+        if frame_tables
+        else pd.DataFrame(columns=POSE_CANDIDATE_COLUMNS),
+        processed_frame_count,
+    )
 
 
 def _candidate_boxes(candidates: pd.DataFrame) -> pd.DataFrame:
