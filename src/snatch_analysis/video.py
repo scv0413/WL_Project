@@ -26,9 +26,15 @@ def read_video_properties(video_path: str | Path) -> VideoProperties:
             }
 
         fps = float(capture.get(cv2.CAP_PROP_FPS))
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        frame_count = 0
+        while True:
+            success, _ = capture.read()
+            if not success:
+                break
+            frame_count += 1
     finally:
         capture.release()
 
