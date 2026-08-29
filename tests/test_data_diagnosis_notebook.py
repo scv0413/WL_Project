@@ -199,6 +199,7 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
                 for video_id in selected[:3]
             }
             settings.source = (
+                "RUN_U9_SETUP = True\n"
                 f"U9_EVALUATION_PERSON_ROLES = {roles!r}\n"
                 f"U9_SELECTED_VIDEO_IDS = {selected!r}\n"
                 f"U9_VIDEO_LABELS = {labels!r}\n"
@@ -396,6 +397,7 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
         events: dict[str, dict[str, int]],
     ) -> str:
         return (
+            "RUN_U9_SETUP = True\n"
             f"U9_EVALUATION_PERSON_ROLES = {roles!r}\n"
             f"U9_SELECTED_VIDEO_IDS = {selected!r}\n"
             f"U9_VIDEO_LABELS = {labels!r}\n"
@@ -405,7 +407,31 @@ class DataDiagnosisNotebookTests(unittest.TestCase):
             "RUN_U9_MANUAL_BBOX_LABELING = False\n"
             "OVERWRITE_U9_GROUND_TRUTH = False"
         )
+    
+    def test_u9_has_ground_truth_overlay_contact_sheet(self) -> None:
+        notebook = nbformat.read(NOTEBOOK_PATH, as_version=4)
 
+        overlay_cells = [
+            cell
+            for cell in notebook.cells
+            if "U9_GROUND_TRUTH_CONTACT_SHEET_PATH" in cell.source
+        ]
 
+        self.assertEqual(len(overlay_cells), 1)
+        overlay_cell = overlay_cells[0]
+
+        for expected in (
+            '"plate"',
+            '"lifter"',
+            '{prefix}_bbox_x',
+            '{prefix}_bbox_y',
+            '{prefix}_bbox_width',
+            '{prefix}_bbox_height',
+            "cv2.rectangle",
+            "figure.savefig",
+            "U9_GROUND_TRUTH_REVIEWED",
+        ):
+            self.assertIn(expected, overlay_cell.source)
+            
 if __name__ == "__main__":
     unittest.main()
