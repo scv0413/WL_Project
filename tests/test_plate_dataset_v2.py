@@ -530,6 +530,182 @@ class PlateDatasetV2NotebookTests(unittest.TestCase):
             if cell["cell_type"] == "code":
                 compile("".join(cell["source"]), cell["id"], "exec")
 
+    def test_evaluation_keeps_threshold_and_tracker_fixed(self) -> None:
+        settings = self._cell_source("u10-evaluation-settings")
+        evaluation = self._cell_source("u10-evaluation")
+
+        self.assertIn("U10_EVALUATION_CONFIDENCE = 0.10", settings)
+        self.assertIn("U10_PRIMARY_PLATE_CHOICES", settings)
+        self.assertIn("infer_plate_video_candidates", evaluation)
+        self.assertIn("select_primary_plate_track", evaluation)
+        self.assertIn("evaluate_plate_video", evaluation)
+        self.assertIn("aggregate_plate_evaluations", evaluation)
+        self.assertIn("weights_sha256", evaluation)
+        self.assertIn("plate_summary.pop(stale_key, None)", evaluation)
+
+    def test_decision_uses_raw_counts_and_all_guard_metrics(self) -> None:
+        from snatch_analysis.pipeline import save_json_atomically
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            baseline_rows = [
+                ("A", "a01_sn_f_01", 4, 4, 0, 43, 87, 7),
+                ("B", "b01_sn_f_01", 6, 6, 0, 63, 129, 16),
+                ("C", "c01_sn_f_01", 2, 2, 0, 13, 99, 18),
+                ("ALL", "ALL", 12, 12, 0, 119, 315, 18),
+            ]
+            candidate_rows = [
+                ("A", "a01_sn_f_01", 5, 5, 0, 50, 87, 6),
+                ("B", "b01_sn_f_01", 7, 7, 0, 70, 129, 14),
+                ("C", "c01_sn_f_01", 3, 3, 0, 16, 99, 15),
+                ("ALL", "ALL", 15, 15, 0, 136, 315, 15),
+            ]
+            columns = (
+                "group", "video_id", "candidate_correct_count",
+                "track_correct_count", "wrong_target_count",
+                "track_ok_frame_count", "plate_applicable_frame_count",
+                "longest_non_ok_gap_frames",
+            )
+            comparison = pd.concat(
+                [
+                    pd.DataFrame(baseline_rows, columns=columns).assign(
+                        model_stage="u9_baseline"
+                    ),
+                    pd.DataFrame(candidate_rows, columns=columns).assign(
+                        model_stage="u10_candidate"
+                    ),
+                ],
+                ignore_index=True,
+            )
+            comparison["plate_ok_rate"] = (
+                comparison["track_ok_frame_count"]
+                / comparison["plate_applicable_frame_count"]
+            )
+            comparison_path = root / "plate_model_comparison.csv"
+            comparison.to_csv(comparison_path, index=False)
+
+            def decide(candidate_updates: dict[str, float] | None = None) -> dict:
+                candidate_comparison = comparison.copy()
+                candidate_overall = (
+                    candidate_comparison["model_stage"].eq("u10_candidate")
+                    & candidate_comparison["group"].eq("ALL")
+                )
+                for column, value in (candidate_updates or {}).items():
+                    candidate_comparison.loc[candidate_overall, column] = value
+                namespace = {
+                    "pd": pd,
+                    "plate_model_comparison": candidate_comparison,
+                    "U10_EVALUATION_ROOT": root,
+                    "U10_MODEL_COMPARISON_PATH": comparison_path,
+                    "U10_DECISION_PATH": root / "decision.json",
+                    "save_json_atomically": save_json_atomically,
+                    "display": lambda _value: None,
+                }
+                exec(self._cell_source("u10-decision"), namespace)
+                return namespace["u10_decision"]
+
+            adopted = decide()
+            self.assertEqual(adopted["decision"], "adopt")
+            self.assertEqual(adopted["correct_gain"], 3)
+            self.assertEqual(decide({"wrong_target_count": 1})["decision"], "reject")
+            self.assertEqual(decide({"track_correct_count": 11})["decision"], "reject")
+            self.assertEqual(
+                decide({
+                    "plate_ok_rate": 119 / 315,
+                    "longest_non_ok_gap_frames": 18,
+                })["decision"],
+                "reject",
+            )
+            self.assertEqual(
+                decide({"candidate_correct_count": 14})["decision"],
+                "hold",
+            )
+
+            regressed_groups = comparison.copy()
+            regressed_groups.loc[
+                regressed_groups["model_stage"].eq("u10_candidate")
+                & regressed_groups["group"].eq("A"),
+                "candidate_correct_count",
+            ] = 2
+            regressed_groups.to_csv(comparison_path, index=False)
+            restart_namespace = {
+                "pd": pd,
+                "plate_model_comparison": pd.DataFrame(),
+                "U10_EVALUATION_ROOT": root,
+                "U10_MODEL_COMPARISON_PATH": comparison_path,
+                "U10_DECISION_PATH": root / "decision.json",
+                "save_json_atomically": save_json_atomically,
+                "display": lambda _value: None,
+            }
+            exec(self._cell_source("u10-decision"), restart_namespace)
+            self.assertEqual(restart_namespace["u10_decision"]["decision"], "hold")
+
+    def test_failure_review_pages_frames_and_closes_each_figure(self) -> None:
+        import math
+
+        import cv2
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            rows = []
+            for frame_index in range(11):
+                rows.append({
+                    "video_id": "a01_sn_f_01",
+                    "frame_index": frame_index,
+                    "plate_present": "yes",
+                    "candidate_outcome": "missing",
+                    "track_outcome": "missing",
+                    "track_iou": math.nan,
+                    "track_status": "missing",
+                    "ground_truth_bbox_x1": 1,
+                    "ground_truth_bbox_y1": 1,
+                    "ground_truth_bbox_x2": 5,
+                    "ground_truth_bbox_y2": 5,
+                    "track_bbox_x1": math.nan,
+                    "track_bbox_y1": math.nan,
+                    "track_bbox_x2": math.nan,
+                    "track_bbox_y2": math.nan,
+                })
+            frame_evaluation_path = root / "plate_frame_evaluation.csv"
+            pd.DataFrame(rows).to_csv(frame_evaluation_path, index=False)
+
+            def fake_frames(*_args: object, **_kwargs: object):
+                for frame_index in range(11):
+                    yield frame_index, float(frame_index), np.zeros((20, 20, 3), dtype=np.uint8)
+
+            namespace = {
+                "cv2": cv2,
+                "math": math,
+                "np": np,
+                "pd": pd,
+                "plt": plt,
+                "PROJECT_ROOT": root,
+                "U10_EVALUATION_ROOT": root,
+                "U10_FRAME_EVALUATION_PATH": frame_evaluation_path,
+                "U10_FAILURE_REVIEW_LIMIT": 30,
+                "u10_frame_evaluation": pd.DataFrame(),
+                "display": lambda _value: None,
+                "pilot_rows": pd.DataFrame([{
+                    "video_id": "a01_sn_f_01",
+                    "path": "video.mp4",
+                    "frame_count": 11,
+                }]),
+                "iter_video_frames": fake_frames,
+            }
+            with (
+                patch.object(plt, "show"),
+                patch.object(plt, "close", wraps=plt.close) as close_figure,
+            ):
+                exec(self._cell_source("u10-failure-review"), namespace)
+
+            self.assertEqual(len(namespace["u10_failure_contact_sheet_paths"]), 2)
+            self.assertEqual(close_figure.call_count, 2)
+            self.assertTrue(
+                all(path.exists() for path in namespace["u10_failure_contact_sheet_paths"])
+            )
+
     def test_training_defaults_are_small_and_review_gate_fails_closed(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             namespace = {
