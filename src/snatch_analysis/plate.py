@@ -385,6 +385,192 @@ def save_yolo_plate_label(
     return action
 
 
+def cancel_plate_label(
+    label_path: str | Path,
+    *,
+    overwrite: bool = False,
+) -> str:
+    """재라벨링 취소 시 기존 bbox가 정답처럼 남지 않게 한다."""
+    label_path = Path(label_path)
+    if overwrite and label_path.exists():
+        label_path.unlink()
+        return "plate_label_removed"
+    return "plate_label_cancelled"
+
+
+def save_u10_plate_dataset_yaml(
+    dataset_root: str | Path,
+    baseline_dataset_root: str | Path,
+    video_split: pd.DataFrame,
+    sample_frames: pd.DataFrame,
+) -> dict[str, int]:
+    """현재 U10 split·sample·파일이 모두 일치할 때만 YAML을 쓴다."""
+    dataset_root = Path(dataset_root)
+    baseline_dataset_root = Path(baseline_dataset_root)
+    yaml_path = dataset_root / "dataset.yaml"
+    yaml_path.unlink(missing_ok=True)
+
+    split_columns = {"video_id", "dataset_role"}
+    sample_columns = {
+        "video_id",
+        "frame_index",
+        "dataset_role",
+        "image_filename",
+        "label_filename",
+    }
+    if not split_columns.issubset(video_split.columns) or not sample_columns.issubset(
+        sample_frames.columns
+    ):
+        raise ValueError("video_split and sample_frames columns are incomplete")
+    if len(video_split) != 6 or video_split["video_id"].duplicated().any():
+        raise ValueError("video_split and sample_frames must describe six videos")
+    if video_split["dataset_role"].value_counts().to_dict() != {
+        "train": 4,
+        "validation": 2,
+    }:
+        raise ValueError("video_split and sample_frames roles do not match U10")
+    if len(sample_frames) != 120 or sample_frames.duplicated(
+        ["video_id", "frame_index"]
+    ).any():
+        raise ValueError("video_split and sample_frames must contain 120 unique frames")
+
+    split_roles = video_split.set_index("video_id")["dataset_role"]
+    if set(sample_frames["video_id"].astype(str)) != set(split_roles.index.astype(str)):
+        raise ValueError("video_split and sample_frames video IDs do not match")
+    expected_sample_roles = sample_frames["video_id"].map(split_roles)
+    if not expected_sample_roles.eq(sample_frames["dataset_role"]).all():
+        raise ValueError("video_split and sample_frames roles do not match")
+    if not sample_frames.groupby("video_id").size().eq(20).all():
+        raise ValueError("video_split and sample_frames need 20 frames per video")
+    if sample_frames["image_filename"].duplicated().any() or sample_frames[
+        "label_filename"
+    ].duplicated().any():
+        raise ValueError("video_split and sample_frames filenames must be unique")
+
+    frame_indices = pd.to_numeric(sample_frames["frame_index"], errors="coerce")
+    if (
+        frame_indices.isna().any()
+        or not np.isfinite(frame_indices).all()
+        or not np.equal(frame_indices, np.floor(frame_indices)).all()
+        or frame_indices.lt(0).any()
+    ):
+        raise ValueError("video_split and sample_frames frame indices are invalid")
+    expected_image_names = [
+        f"{video_id}_frame_{int(frame_index):04d}.jpg"
+        for video_id, frame_index in zip(
+            sample_frames["video_id"], frame_indices, strict=True
+        )
+    ]
+    expected_label_names = [
+        Path(image_name).with_suffix(".txt").name
+        for image_name in expected_image_names
+    ]
+    if not sample_frames["image_filename"].eq(expected_image_names).all() or not sample_frames[
+        "label_filename"
+    ].eq(expected_label_names).all():
+        raise ValueError("sample filenames must match video_id and frame_index")
+
+    image_stems = sample_frames["image_filename"].map(lambda name: Path(name).stem)
+    label_stems = sample_frames["label_filename"].map(lambda name: Path(name).stem)
+    if not image_stems.eq(label_stems).all():
+        raise ValueError("video_split and sample_frames image-label names do not match")
+
+    baseline_image_stems = {
+        path.stem for path in (baseline_dataset_root / "images").glob("*.jpg")
+    }
+    baseline_label_stems = {
+        path.stem for path in (baseline_dataset_root / "labels").glob("*.txt")
+    }
+    if len(baseline_image_stems) != 30 or baseline_image_stems != baseline_label_stems:
+        raise ValueError("baseline must contain exactly 30 image-label pairs")
+
+    expected_stems_by_role = {
+        "train": baseline_image_stems
+        | set(image_stems[sample_frames["dataset_role"].eq("train")]),
+        "validation": set(
+            image_stems[sample_frames["dataset_role"].eq("validation")]
+        ),
+    }
+
+    counts = {}
+    mismatches = []
+    for role, expected_stems in expected_stems_by_role.items():
+        image_root = dataset_root / "images" / role
+        label_root = dataset_root / "labels" / role
+        actual_image_paths = {
+            path.relative_to(image_root).as_posix()
+            for path in image_root.rglob("*")
+            if path.is_file()
+        }
+        actual_label_paths = {
+            path.relative_to(label_root).as_posix()
+            for path in label_root.rglob("*")
+            if path.is_file()
+        }
+        expected_image_paths = {f"{stem}.jpg" for stem in expected_stems}
+        expected_label_paths = {f"{stem}.txt" for stem in expected_stems}
+        counts[f"{role}_images"] = len(actual_image_paths)
+        counts[f"{role}_labels"] = len(actual_label_paths)
+        if (
+            actual_image_paths != expected_image_paths
+            or actual_label_paths != expected_label_paths
+        ):
+            mismatches.append(role)
+
+    if mismatches:
+        raise ValueError(
+            "dataset files do not match current split: " + ", ".join(mismatches)
+        )
+
+    for role, expected_stems in expected_stems_by_role.items():
+        for stem in expected_stems:
+            label_path = dataset_root / "labels" / role / f"{stem}.txt"
+            tokens = label_path.read_text(encoding="utf-8").strip().split()
+            if len(tokens) != 5 or tokens[0] != "0":
+                raise ValueError(f"invalid plate label: {label_path}")
+            try:
+                center_x, center_y, width, height = (
+                    float(value) for value in tokens[1:]
+                )
+            except ValueError as error:
+                raise ValueError(f"invalid plate label: {label_path}") from error
+            values = (center_x, center_y, width, height)
+            if not all(np.isfinite(value) for value in values) or not (
+                0 <= center_x <= 1
+                and 0 <= center_y <= 1
+                and 0 < width <= 1
+                and 0 < height <= 1
+                and center_x - width / 2 >= 0
+                and center_x + width / 2 <= 1
+                and center_y - height / 2 >= 0
+                and center_y + height / 2 <= 1
+            ):
+                raise ValueError(f"invalid plate label: {label_path}")
+
+    yaml_text = (
+        f"path: {dataset_root.resolve()}\n"
+        "train: images/train\n"
+        "val: images/validation\n"
+        "names:\n"
+        "  0: plate\n"
+    )
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=dataset_root,
+        suffix=".tmp",
+        delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+        temporary_file.write(yaml_text)
+    try:
+        temporary_path.replace(yaml_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return counts
+
+
 def plate_result_to_candidates(
     result: Any,
     video_id: str,
