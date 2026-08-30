@@ -29,6 +29,15 @@ _SAMPLE_COLUMNS = (
     "sampling_phase",
     "setup_reference_override",
 )
+_TIME_BIN_COUNT = 5
+_U10_SAMPLES_PER_VIDEO = 20
+_TIME_BIN_SAMPLE_COLUMNS = ("video_id", "frame_index", "sampling_bin")
+U10_PLATE_SELECTION_COLUMNS = (
+    "video_id",
+    "person_id",
+    "dataset_role",
+    "selection_reason",
+)
 PLATE_CANDIDATE_COLUMNS = (
     "video_id",
     "frame_index",
@@ -144,6 +153,109 @@ def sample_phase_frames(
     sampled = pd.concat(sampled_rows, ignore_index=True)
     sampled = sampled.sort_values("frame_index").reset_index(drop=True)
     return sampled.loc[:, _SAMPLE_COLUMNS]
+
+
+def sample_time_bin_frames(
+    video_id: str,
+    frame_count: int,
+    *,
+    sample_count: int = 20,
+) -> pd.DataFrame:
+    """정확한 phase 라벨 없이 다섯 시간 구간에서 frame을 선택한다."""
+    if not isinstance(video_id, str) or not video_id.strip():
+        raise ValueError("video_id must not be empty")
+    if isinstance(frame_count, bool) or not isinstance(frame_count, Integral):
+        raise ValueError("frame_count must be an integer")
+    if isinstance(sample_count, bool) or not isinstance(sample_count, Integral):
+        raise ValueError("sample_count must be an integer")
+    if sample_count != _U10_SAMPLES_PER_VIDEO:
+        raise ValueError("sample_count must be exactly 20 for U10")
+    if frame_count < sample_count:
+        raise ValueError("frame_count must be at least sample_count")
+
+    rows = []
+    per_bin = sample_count // _TIME_BIN_COUNT
+    for sampling_bin, frame_indices in enumerate(
+        np.array_split(np.arange(frame_count), _TIME_BIN_COUNT),
+        start=1,
+    ):
+        positions = np.linspace(
+            0,
+            len(frame_indices) - 1,
+            num=per_bin,
+            dtype=int,
+        )
+        rows.extend(
+            {
+                "video_id": video_id,
+                "frame_index": int(frame_indices[position]),
+                "sampling_bin": sampling_bin,
+            }
+            for position in positions
+        )
+    return pd.DataFrame(rows, columns=_TIME_BIN_SAMPLE_COLUMNS).sort_values(
+        "frame_index",
+        ignore_index=True,
+    )
+
+
+def validate_u10_plate_selection(
+    selection: pd.DataFrame,
+    manifest: pd.DataFrame,
+    *,
+    baseline_video_id: str,
+) -> pd.DataFrame:
+    """U10 신규 영상 6개의 역할과 person 단위 분리를 검증한다."""
+    if tuple(selection.columns) != U10_PLATE_SELECTION_COLUMNS:
+        raise ValueError("U10 plate selection schema가 일치하지 않습니다.")
+    if len(selection) != 6 or selection["video_id"].duplicated().any():
+        raise ValueError("U10에는 서로 다른 신규 영상 6개가 필요합니다.")
+    if selection["dataset_role"].value_counts().to_dict() != {
+        "train": 4,
+        "validation": 2,
+    }:
+        raise ValueError(
+            "U10 dataset_role은 train 4개와 validation 2개여야 합니다."
+        )
+    if baseline_video_id in set(selection["video_id"].astype(str)):
+        raise ValueError("B00 baseline은 신규 영상 6개에 포함할 수 없습니다.")
+    reasons = selection["selection_reason"]
+    if reasons.isna().any() or reasons.astype(str).str.strip().eq("").any():
+        raise ValueError("각 U10 영상에는 selection_reason이 필요합니다.")
+
+    required_columns = {
+        "video_id",
+        "person_id",
+        "split_role",
+        "read_status",
+        "has_plate",
+    }
+    missing_columns = sorted(required_columns - set(manifest.columns))
+    if missing_columns:
+        raise ValueError("Manifest columns missing: " + ", ".join(missing_columns))
+    if manifest["video_id"].duplicated().any():
+        raise ValueError("Manifest의 video_id가 중복되었습니다.")
+
+    selected = selection.merge(
+        manifest.loc[:, sorted(required_columns)],
+        on=["video_id", "person_id"],
+        how="left",
+        validate="one_to_one",
+    )
+    if selected["split_role"].isna().any():
+        raise ValueError("Manifest에 없는 video_id/person_id 선택입니다.")
+    if not selected["split_role"].eq("training_development").all():
+        raise ValueError("U10에는 training_development 영상만 사용할 수 있습니다.")
+    if not selected["read_status"].eq("ok").all():
+        raise ValueError("U10 영상의 read_status는 모두 ok여야 합니다.")
+    if not selected["has_plate"].eq("yes").all():
+        raise ValueError("선택한 U10 영상의 has_plate를 yes로 확정하세요.")
+    if selection["person_id"].nunique() < 4:
+        raise ValueError("U10 신규 영상은 최소 네 사람을 포함해야 합니다.")
+    roles_per_person = selection.groupby("person_id")["dataset_role"].nunique()
+    if (roles_per_person > 1).any():
+        raise ValueError("같은 person_id를 train과 validation에 나눌 수 없습니다.")
+    return selection.copy().reset_index(drop=True)
 
 
 def opencv_bbox_to_yolo(
