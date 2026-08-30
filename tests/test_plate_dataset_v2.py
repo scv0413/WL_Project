@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+from types import ModuleType, SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -507,6 +510,14 @@ class PlateDatasetV2NotebookTests(unittest.TestCase):
             Path("notebooks/06_plate_dataset_v2.ipynb").read_text(encoding="utf-8")
         )
 
+    @classmethod
+    def _cell_source(cls, cell_id: str) -> str:
+        return next(
+            "".join(cell["source"])
+            for cell in cls._notebook()["cells"]
+            if cell["id"] == cell_id
+        )
+
     def test_notebook_is_source_only(self) -> None:
         code_cells = [
             cell for cell in self._notebook()["cells"] if cell["cell_type"] == "code"
@@ -518,6 +529,266 @@ class PlateDatasetV2NotebookTests(unittest.TestCase):
         for cell in self._notebook()["cells"]:
             if cell["cell_type"] == "code":
                 compile("".join(cell["source"]), cell["id"], "exec")
+
+    def test_training_defaults_are_small_and_review_gate_fails_closed(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            namespace = {
+                "U10_ARTIFACT_ROOT": Path(temporary_directory) / "artifacts",
+            }
+            exec(self._cell_source("u10-training-settings"), namespace)
+
+            self.assertFalse(namespace["RUN_U10_TRAINING"])
+            self.assertFalse(namespace["CONFIRM_U10_LABEL_REVIEW"])
+            self.assertEqual(namespace["U10_EPOCHS"], 10)
+            self.assertEqual(namespace["U10_IMAGE_SIZE"], 320)
+            self.assertEqual(namespace["U10_BATCH"], 4)
+            self.assertEqual(namespace["U10_SEED"], 0)
+
+            exec(self._cell_source("u10-training"), namespace)
+            self.assertEqual(namespace["u10_training_status"], "not_run")
+
+            namespace["RUN_U10_TRAINING"] = True
+            with self.assertRaisesRegex(RuntimeError, "contact sheet"):
+                exec(self._cell_source("u10-training"), namespace)
+
+    def test_training_revalidates_data_and_saves_reproducible_summary(self) -> None:
+        from hashlib import sha256
+        import resource
+        import time
+
+        from snatch_analysis.pipeline import save_json_atomically
+        from snatch_analysis.plate import (
+            save_u10_plate_dataset_yaml,
+            validate_u10_plate_selection,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            dataset_root = root / "data/plate_dataset_v2"
+            baseline_root = root / "data/plate_dataset"
+            artifact_root = root / "artifacts/u10_plate_dataset_v2"
+            video_split = PlateDatasetFileSafetyTests._video_split()
+            video_split["person_id"] = video_split["video_id"].str.split("_").str[0]
+            video_split["selection_reason"] = "test fixture"
+            sample_frames = PlateDatasetFileSafetyTests._sample_frames(video_split)
+            PlateDatasetFileSafetyTests._write_dataset_files(
+                dataset_root,
+                baseline_root,
+                sample_frames,
+            )
+            video_split_path = dataset_root / "video_split.csv"
+            sample_manifest_path = dataset_root / "sample_frames.csv"
+            manifest_path = root / "data/metadata/videos.csv"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            video_split.to_csv(video_split_path, index=False)
+            sample_frames.to_csv(sample_manifest_path, index=False)
+            pd.DataFrame(
+                {
+                    "video_id": video_split["video_id"],
+                    "person_id": video_split["person_id"],
+                    "split_role": "training_development",
+                    "read_status": "ok",
+                    "has_plate": "yes",
+                }
+            ).to_csv(manifest_path, index=False)
+
+            calls = {}
+            fake_ultralytics = ModuleType("ultralytics")
+            fake_ultralytics.__version__ = "test-version"
+
+            class FakeYOLO:
+                def __init__(self, model_name: str) -> None:
+                    calls["model_name"] = model_name
+                    self.trainer = None
+
+                def train(self, **kwargs: object) -> SimpleNamespace:
+                    calls["train_kwargs"] = kwargs
+                    save_dir = Path(str(kwargs["project"])) / str(kwargs["name"])
+                    weights_path = save_dir / "weights/best.pt"
+                    weights_path.parent.mkdir(parents=True, exist_ok=True)
+                    weights_path.write_bytes(b"fake-best-weights")
+                    self.trainer = SimpleNamespace(best=weights_path)
+                    return SimpleNamespace(metrics="fake")
+
+            fake_ultralytics.YOLO = FakeYOLO
+            namespace = {
+                "Path": Path,
+                "pd": pd,
+                "time": time,
+                "resource": resource,
+                "sha256": sha256,
+                "DATASET_ROOT": dataset_root,
+                "BASELINE_DATASET_ROOT": baseline_root,
+                "VIDEO_SPLIT_PATH": video_split_path,
+                "SAMPLE_MANIFEST_PATH": sample_manifest_path,
+                "MANIFEST_PATH": manifest_path,
+                "DATASET_YAML_PATH": dataset_root / "dataset.yaml",
+                "U10_ARTIFACT_ROOT": artifact_root,
+                "B00_VIDEO_ID": "b00_sn_f_01",
+                "DETECTION_MODEL_NAME": "yolov8n.pt",
+                "save_u10_plate_dataset_yaml": save_u10_plate_dataset_yaml,
+                "validate_u10_plate_selection": validate_u10_plate_selection,
+                "save_json_atomically": save_json_atomically,
+                "resolve_inference_device": lambda requested: {
+                    "requested_device": requested,
+                    "actual_device": "cpu",
+                    "fallback_reason": "mps_unavailable",
+                },
+                "verify_ultralytics_safe_load": lambda: {"active": True},
+                "display": lambda _value: None,
+            }
+            exec(self._cell_source("u10-training-settings"), namespace)
+            namespace["RUN_U10_TRAINING"] = True
+            namespace["CONFIRM_U10_LABEL_REVIEW"] = True
+
+            with patch.dict(sys.modules, {"ultralytics": fake_ultralytics}):
+                exec(self._cell_source("u10-training"), namespace)
+
+            self.assertEqual(calls["model_name"], "yolov8n.pt")
+            self.assertEqual(
+                calls["train_kwargs"],
+                {
+                    "data": str(dataset_root / "dataset.yaml"),
+                    "epochs": 10,
+                    "imgsz": 320,
+                    "batch": 4,
+                    "seed": 0,
+                    "device": "cpu",
+                    "project": str((artifact_root / "training").parent.resolve()),
+                    "name": "training",
+                    "exist_ok": True,
+                },
+            )
+            summary = json.loads(
+                (artifact_root / "training/run_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(summary["status"], "complete")
+            self.assertEqual(summary["label_counts"]["train_labels"], 110)
+            self.assertEqual(summary["label_counts"]["validation_labels"], 40)
+            self.assertEqual(summary["dataset_split"]["person_overlap"], [])
+            self.assertEqual(
+                summary["dataset_split"]["train_video_ids"],
+                sorted(video_split.loc[video_split["dataset_role"].eq("train"), "video_id"]),
+            )
+            self.assertEqual(
+                summary["dataset_split"]["validation_video_ids"],
+                sorted(
+                    video_split.loc[
+                        video_split["dataset_role"].eq("validation"), "video_id"
+                    ]
+                ),
+            )
+            self.assertEqual(summary["model"], "yolov8n.pt")
+            self.assertEqual(summary["ultralytics_version"], "test-version")
+            self.assertEqual(
+                summary["weights_sha256"], sha256(b"fake-best-weights").hexdigest()
+            )
+            self.assertEqual(summary["model_size_bytes"], len(b"fake-best-weights"))
+            self.assertEqual(summary["epochs"], 10)
+            self.assertEqual(summary["batch"], 4)
+            self.assertEqual(summary["image_size"], 320)
+            self.assertEqual(summary["seed"], 0)
+            self.assertEqual(summary["requested_device"], "mps")
+            self.assertEqual(summary["actual_device"], "cpu")
+            self.assertEqual(summary["device_fallback_reason"], "mps_unavailable")
+            self.assertGreaterEqual(summary["training_seconds"], 0)
+            self.assertGreater(summary["peak_rss_bytes"], 0)
+            self.assertEqual(summary["safe_load"], {"active": True})
+
+            class StaleCheckpointYOLO:
+                def __init__(self, _model_name: str) -> None:
+                    self.trainer = SimpleNamespace(
+                        best=artifact_root / "training/weights/best.pt"
+                    )
+
+                def train(self, **_kwargs: object) -> SimpleNamespace:
+                    return SimpleNamespace(metrics="fake")
+
+            fake_ultralytics.YOLO = StaleCheckpointYOLO
+            with patch.dict(sys.modules, {"ultralytics": fake_ultralytics}):
+                with self.assertRaisesRegex(RuntimeError, "현재 학습"):
+                    exec(self._cell_source("u10-training"), namespace)
+            self.assertFalse((artifact_root / "training/run_summary.json").exists())
+
+    def test_training_rejects_manifest_person_leakage_before_model_load(self) -> None:
+        from hashlib import sha256
+        import resource
+        import time
+
+        from snatch_analysis.pipeline import save_json_atomically
+        from snatch_analysis.plate import (
+            save_u10_plate_dataset_yaml,
+            validate_u10_plate_selection,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            dataset_root = root / "data/plate_dataset_v2"
+            artifact_root = root / "artifacts/u10_plate_dataset_v2"
+            selection = PlateDatasetSelectionTests._selection()
+            manifest = pd.DataFrame(
+                {
+                    "video_id": selection["video_id"],
+                    "person_id": selection["person_id"],
+                    "split_role": "training_development",
+                    "read_status": "ok",
+                    "has_plate": "yes",
+                }
+            )
+            manifest.loc[5, "person_id"] = selection.loc[0, "person_id"]
+            dataset_root.mkdir(parents=True)
+            selection.to_csv(dataset_root / "video_split.csv", index=False)
+            pd.DataFrame(
+                columns=(
+                    "video_id",
+                    "frame_index",
+                    "dataset_role",
+                    "image_filename",
+                    "label_filename",
+                )
+            ).to_csv(dataset_root / "sample_frames.csv", index=False)
+            manifest_path = root / "data/metadata/videos.csv"
+            manifest_path.parent.mkdir(parents=True)
+            manifest.to_csv(manifest_path, index=False)
+
+            namespace = {
+                "Path": Path,
+                "pd": pd,
+                "time": time,
+                "resource": resource,
+                "sha256": sha256,
+                "DATASET_ROOT": dataset_root,
+                "BASELINE_DATASET_ROOT": root / "data/plate_dataset",
+                "VIDEO_SPLIT_PATH": dataset_root / "video_split.csv",
+                "SAMPLE_MANIFEST_PATH": dataset_root / "sample_frames.csv",
+                "MANIFEST_PATH": manifest_path,
+                "DATASET_YAML_PATH": dataset_root / "dataset.yaml",
+                "U10_ARTIFACT_ROOT": artifact_root,
+                "B00_VIDEO_ID": "b00_sn_f_01",
+                "DETECTION_MODEL_NAME": "yolov8n.pt",
+                "save_u10_plate_dataset_yaml": save_u10_plate_dataset_yaml,
+                "validate_u10_plate_selection": validate_u10_plate_selection,
+                "save_json_atomically": save_json_atomically,
+                "resolve_inference_device": lambda _requested: self.fail(
+                    "device resolution must not run for leaked data"
+                ),
+                "verify_ultralytics_safe_load": lambda: self.fail(
+                    "model load must not run for leaked data"
+                ),
+                "display": lambda _value: None,
+            }
+            exec(self._cell_source("u10-training-settings"), namespace)
+            namespace["RUN_U10_TRAINING"] = True
+            namespace["CONFIRM_U10_LABEL_REVIEW"] = True
+            summary_path = artifact_root / "training/run_summary.json"
+            summary_path.parent.mkdir(parents=True)
+            summary_path.write_text('{"status": "stale"}', encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "person_id"):
+                exec(self._cell_source("u10-training"), namespace)
+            self.assertFalse(summary_path.exists())
 
 if __name__ == "__main__":
     unittest.main()
