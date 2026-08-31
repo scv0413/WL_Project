@@ -1079,6 +1079,229 @@ class PlateTrackingTests(unittest.TestCase):
         self.assertEqual(candidates["center_y_normalized"].tolist(), [0.6, 0.4])
 
 
+class U11Task2ValidationTests(unittest.TestCase):
+    @staticmethod
+    def _manifest() -> pd.DataFrame:
+        rows = []
+        for group in ("A", "B", "C"):
+            for index in range(1, 4):
+                person_id = f"{group.lower()}{index + 10:02d}"
+                rows.append(
+                    {
+                        "video_id": f"{person_id}_sn_f_01",
+                        "person_id": person_id,
+                        "group": group,
+                        "split_role": "training_development",
+                        "read_status": "ok",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_validates_three_unseen_people_per_group(self) -> None:
+        validator = getattr(
+            plate_module, "validate_u11_task2_video_selection", None
+        )
+        self.assertTrue(
+            callable(validator),
+            "validate_u11_task2_video_selection is missing",
+        )
+        manifest = self._manifest()
+
+        selected = validator(
+            tuple(manifest["video_id"]),
+            manifest,
+            excluded_person_ids={"a01", "b01", "c01"},
+        )
+
+        self.assertEqual(len(selected), 9)
+        self.assertEqual(
+            selected["group"].value_counts().to_dict(),
+            {"A": 3, "B": 3, "C": 3},
+        )
+        self.assertEqual(selected["person_id"].nunique(), 9)
+        self.assertEqual(
+            selected["video_id"].tolist(), manifest["video_id"].tolist()
+        )
+
+    def test_rejects_people_used_by_earlier_detector_experiments(self) -> None:
+        validator = getattr(
+            plate_module, "validate_u11_task2_video_selection", None
+        )
+        self.assertTrue(callable(validator))
+        manifest = self._manifest()
+
+        with self.assertRaisesRegex(ValueError, "이전 실험"):
+            validator(
+                tuple(manifest["video_id"]),
+                manifest,
+                excluded_person_ids={"a11"},
+            )
+
+    def test_rejects_rule_blind_video_from_selector_development(self) -> None:
+        validator = getattr(
+            plate_module, "validate_u11_task2_video_selection", None
+        )
+        self.assertTrue(callable(validator))
+        manifest = self._manifest()
+        manifest.loc[manifest["video_id"].eq("a11_sn_f_01"), "split_role"] = (
+            "rule_blind"
+        )
+
+        with self.assertRaisesRegex(ValueError, "rule_blind"):
+            validator(
+                tuple(manifest["video_id"]),
+                manifest,
+                excluded_person_ids=set(),
+            )
+
+    def test_builds_complete_manual_targets_from_candidate_ids_and_na_reasons(self) -> None:
+        validator = getattr(plate_module, "validate_initial_plate_targets", None)
+        self.assertTrue(
+            callable(validator), "validate_initial_plate_targets is missing"
+        )
+        video_ids = ("a11_sn_f_01", "b11_sn_f_01", "c11_sn_f_01")
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a11_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 3,
+                    "bbox_x1": 10.0, "bbox_y1": 10.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.9,
+                    "center_x_px": 20.0, "center_y_px": 20.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.2,
+                }
+            ]
+        )
+
+        targets = validator(
+            {
+                "a11_sn_f_01": (0, 3),
+                "b11_sn_f_01": "target_missing",
+                "c11_sn_f_01": "no_plate",
+            },
+            video_ids=video_ids,
+            candidates=candidates,
+        )
+
+        self.assertEqual(
+            targets["target_status"].tolist(),
+            ["selected", "target_missing", "no_plate"],
+        )
+        self.assertEqual(int(targets.loc[0, "frame_index"]), 0)
+        self.assertEqual(int(targets.loc[0, "candidate_id"]), 3)
+        self.assertTrue(pd.isna(targets.loc[1, "candidate_id"]))
+
+    def test_rejects_manual_target_that_is_not_from_first_candidate_frame(self) -> None:
+        validator = getattr(plate_module, "validate_initial_plate_targets", None)
+        self.assertTrue(callable(validator))
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a11_sn_f_01", "frame_index": frame_index,
+                    "timestamp_seconds": frame_index / 30, "candidate_id": 0,
+                    "bbox_x1": 10.0, "bbox_y1": 10.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.9,
+                    "center_x_px": 20.0, "center_y_px": 20.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.2,
+                }
+                for frame_index in (0, 1)
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "첫 후보 frame"):
+            validator(
+                {"a11_sn_f_01": (1, 0)},
+                video_ids=("a11_sn_f_01",),
+                candidates=candidates,
+            )
+
+    def test_evaluates_selector_without_counting_detector_misses_as_selection_errors(self) -> None:
+        evaluator = getattr(
+            plate_module, "evaluate_initial_plate_selections", None
+        )
+        self.assertTrue(
+            callable(evaluator), "evaluate_initial_plate_selections is missing"
+        )
+        video_ids = tuple(f"v{index}" for index in range(7))
+        targets = pd.DataFrame(
+            {
+                "video_id": video_ids,
+                "target_status": [
+                    "selected", "selected", "selected", "selected",
+                    "target_missing", "no_plate", "no_plate",
+                ],
+                "frame_index": [0, 0, 0, 0, np.nan, np.nan, np.nan],
+                "candidate_id": [1, 2, 3, 4, np.nan, np.nan, np.nan],
+            }
+        )
+        selections = pd.DataFrame(
+            {
+                "video_id": video_ids,
+                "group": ["A", "A", "B", "B", "C", "C", "C"],
+                "status": [
+                    "selected", "selected", "confirmation_required",
+                    "not_available", "not_available", "selected",
+                    "confirmation_required",
+                ],
+                "frame_index": [0, 0, 0, np.nan, np.nan, 0, np.nan],
+                "candidate_id": [1, 9, np.nan, np.nan, np.nan, 7, np.nan],
+                "candidate_count": [1, 2, 2, 0, 0, 1, 2],
+            }
+        )
+
+        evaluated, summary = evaluator(selections, targets)
+
+        self.assertEqual(
+            evaluated["selection_outcome"].tolist(),
+            [
+                "correct", "wrong_target", "confirmation_required",
+                "not_available", "target_missing", "false_positive",
+                "confirmation_required_no_plate",
+            ],
+        )
+        self.assertEqual(summary["selection_evaluable_count"], 4)
+        self.assertEqual(summary["correct_selection_count"], 1)
+        self.assertEqual(summary["wrong_auto_selection_count"], 1)
+        self.assertEqual(summary["confirmation_required_count"], 2)
+        self.assertEqual(summary["not_available_count"], 2)
+        self.assertEqual(summary["target_missing_count"], 1)
+        self.assertEqual(summary["false_positive_count"], 1)
+        self.assertEqual(summary["multi_candidate_video_count"], 3)
+        self.assertEqual(summary["auto_selection_accuracy"], 0.25)
+        self.assertAlmostEqual(summary["manual_review_rate"], 4 / 7)
+
+    def test_requires_evaluable_target_in_each_group_before_passing(self) -> None:
+        decide = getattr(
+            plate_module, "decide_initial_plate_selection_evaluation", None
+        )
+        self.assertTrue(
+            callable(decide),
+            "decide_initial_plate_selection_evaluation is missing",
+        )
+        summary = {
+            "wrong_auto_selection_count": 0,
+            "false_positive_count": 0,
+        }
+        incomplete_groups = pd.DataFrame(
+            {
+                "group": ["A", "B", "C"],
+                "selection_evaluable_count": [1, 1, 0],
+            }
+        )
+        complete_groups = incomplete_groups.assign(
+            selection_evaluable_count=[1, 1, 1]
+        )
+
+        self.assertEqual(
+            decide(summary, incomplete_groups), "insufficient_evidence"
+        )
+        self.assertEqual(decide(summary, complete_groups), "pass")
+        self.assertEqual(
+            decide({**summary, "wrong_auto_selection_count": 1}, complete_groups),
+            "hold",
+        )
+
+
 class PlateNotebookSourceContractTests(unittest.TestCase):
     @staticmethod
     def _u11_cell_source(cell_id: str) -> str:
@@ -1111,6 +1334,54 @@ class PlateNotebookSourceContractTests(unittest.TestCase):
                 for cell in code_cells
             )
         )
+
+    def test_u11_task2_settings_default_to_nine_pending_unseen_videos(self) -> None:
+        namespace = {"PROJECT_ROOT": Path("/project"), "POSE_MODEL_NAME": "pose.pt"}
+
+        exec(self._u11_cell_source("u11-task2-settings"), namespace)
+
+        video_ids = namespace["U11_TASK2_VIDEO_IDS"]
+        self.assertEqual(len(video_ids), 9)
+        self.assertEqual(len(set(video_ids)), 9)
+        self.assertFalse(namespace["RUN_U11_TASK2_INFERENCE"])
+        self.assertFalse(namespace["RUN_U11_TASK2_EVALUATION"])
+        self.assertEqual(set(namespace["U11_TASK2_MANUAL_TARGETS"]), set(video_ids))
+        self.assertTrue(
+            all(
+                value is None
+                for value in namespace["U11_TASK2_MANUAL_TARGETS"].values()
+            )
+        )
+
+    def test_u11_task2_reuse_rejects_changed_inference_settings(self) -> None:
+        namespace = {"PROJECT_ROOT": Path("/project"), "POSE_MODEL_NAME": "pose.pt"}
+        exec(self._u11_cell_source("u11-task2-settings"), namespace)
+        validate = namespace.get("validate_task2_reused_summary")
+        self.assertTrue(callable(validate))
+        summary = {
+            "video_id": "a02_sn_f_01",
+            "frame_count": 10,
+            "pose": {
+                "status": "complete", "model": "pose.pt", "image_size": 640,
+                "confidence": 0.25, "keypoint_confidence": 0.5,
+                "processed_frame_count": 10,
+            },
+            "plate": {
+                "status": "complete", "model": "/project/artifacts/u10_plate_dataset_v2/training/weights/best.pt",
+                "weights_sha256": "same", "image_size": 320,
+                "confidence": 0.1, "processed_frame_count": 10,
+            },
+        }
+
+        validate(
+            summary, video_id="a02_sn_f_01", frame_count=10,
+            weights_sha256="same",
+        )
+        with self.assertRaisesRegex(ValueError, "weights_sha256"):
+            validate(
+                summary, video_id="a02_sn_f_01", frame_count=10,
+                weights_sha256="changed",
+            )
 
     def test_u11_no_candidate_run_records_na_and_removes_stale_track(self) -> None:
         with TemporaryDirectory() as temporary_directory:

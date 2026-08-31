@@ -1,5 +1,6 @@
 """원판 학습 frame sampling과 YOLO bbox 라벨 변환."""
 
+from collections.abc import Mapping, Sequence
 from numbers import Integral, Real
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -70,6 +71,12 @@ PILOT_GROUND_TRUTH_COLUMNS = (
     "annotator",
     "notes",
     "na_reason",
+)
+INITIAL_PLATE_TARGET_COLUMNS = (
+    "video_id",
+    "target_status",
+    "frame_index",
+    "candidate_id",
 )
 
 
@@ -256,6 +263,261 @@ def validate_u10_plate_selection(
     if (roles_per_person > 1).any():
         raise ValueError("같은 person_id를 train과 validation에 나눌 수 없습니다.")
     return selection.copy().reset_index(drop=True)
+
+
+def validate_u11_task2_video_selection(
+    video_ids: Sequence[str],
+    manifest: pd.DataFrame,
+    *,
+    excluded_person_ids: set[str],
+) -> pd.DataFrame:
+    """U11 Task 2의 A/B/C 각 3명과 이전 실험 분리를 검증한다."""
+    requested = [str(video_id).strip() for video_id in video_ids]
+    if (
+        len(requested) != 9
+        or len(set(requested)) != 9
+        or any(not value for value in requested)
+    ):
+        raise ValueError("U11 Task 2에는 서로 다른 영상 9개가 필요합니다.")
+
+    required_columns = {
+        "video_id", "person_id", "group", "split_role", "read_status",
+    }
+    missing_columns = sorted(required_columns - set(manifest.columns))
+    if missing_columns:
+        raise ValueError("Manifest columns missing: " + ", ".join(missing_columns))
+    if manifest["video_id"].duplicated().any():
+        raise ValueError("Manifest의 video_id가 중복되었습니다.")
+
+    indexed = manifest.set_index("video_id", drop=False)
+    unknown = sorted(set(requested) - set(indexed.index.astype(str)))
+    if unknown:
+        raise ValueError("Manifest에 없는 U11 영상: " + ", ".join(unknown))
+    selected = indexed.loc[requested].reset_index(drop=True)
+    if selected["group"].value_counts().to_dict() != {"A": 3, "B": 3, "C": 3}:
+        raise ValueError("U11 Task 2는 A/B/C 각 3영상이어야 합니다.")
+    if selected["person_id"].astype(str).nunique() != 9:
+        raise ValueError("U11 Task 2는 서로 다른 사람 9명이 필요합니다.")
+
+    excluded = {str(person_id).strip() for person_id in excluded_person_ids}
+    reused = sorted(set(selected["person_id"].astype(str)) & excluded)
+    if reused:
+        raise ValueError("이전 실험에 사용한 사람은 제외하세요: " + ", ".join(reused))
+    if selected["split_role"].astype(str).eq("rule_blind").any():
+        raise ValueError("rule_blind 영상은 selector 개발에 사용할 수 없습니다.")
+    if not selected["read_status"].astype(str).eq("ok").all():
+        raise ValueError("U11 Task 2 영상의 read_status는 모두 ok여야 합니다.")
+    return selected
+
+
+def validate_initial_plate_targets(
+    targets: Mapping[str, tuple[int, int] | str | None],
+    *,
+    video_ids: Sequence[str],
+    candidates: pd.DataFrame,
+) -> pd.DataFrame:
+    """첫 후보 frame의 수동 target ID 또는 명시적 N/A를 검증한다."""
+    ordered_video_ids = [str(video_id) for video_id in video_ids]
+    if len(ordered_video_ids) != len(set(ordered_video_ids)):
+        raise ValueError("수동 target video_id가 중복되었습니다.")
+    missing = sorted(set(ordered_video_ids) - set(targets))
+    unexpected = sorted(set(targets) - set(ordered_video_ids))
+    if missing or unexpected:
+        raise ValueError(
+            "수동 target video_id가 일치하지 않습니다: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    pending = [
+        video_id for video_id in ordered_video_ids if targets[video_id] is None
+    ]
+    if pending:
+        raise ValueError("수동 target 입력 대기: " + ", ".join(pending))
+
+    _validate_plate_table(candidates, PLATE_CANDIDATE_COLUMNS, "후보")
+    rows = []
+    for video_id in ordered_video_ids:
+        target = targets[video_id]
+        if isinstance(target, str):
+            target_status = target.strip()
+            if target_status not in {"target_missing", "no_plate"}:
+                raise ValueError(
+                    "수동 target 문자열은 target_missing/no_plate만 허용합니다."
+                )
+            rows.append(
+                {
+                    "video_id": video_id,
+                    "target_status": target_status,
+                    "frame_index": math.nan,
+                    "candidate_id": math.nan,
+                }
+            )
+            continue
+        if (
+            not isinstance(target, tuple)
+            or len(target) != 2
+            or any(
+                isinstance(value, bool) or not isinstance(value, Integral)
+                for value in target
+            )
+        ):
+            raise ValueError("수동 target은 (frame_index, candidate_id)여야 합니다.")
+
+        frame_index, candidate_id = (int(target[0]), int(target[1]))
+        video_candidates = candidates.loc[
+            candidates["video_id"].astype(str).eq(video_id)
+        ]
+        if video_candidates.empty:
+            raise ValueError(f"{video_id}에는 확인할 원판 후보가 없습니다.")
+        first_frame_index = int(
+            pd.to_numeric(video_candidates["frame_index"], errors="raise").min()
+        )
+        if frame_index != first_frame_index:
+            raise ValueError(f"{video_id} 수동 target은 첫 후보 frame이어야 합니다.")
+        matched = video_candidates.loc[
+            pd.to_numeric(video_candidates["frame_index"], errors="raise").eq(
+                frame_index
+            )
+            & pd.to_numeric(video_candidates["candidate_id"], errors="raise").eq(
+                candidate_id
+            )
+        ]
+        if len(matched) != 1:
+            raise ValueError(f"{video_id} 수동 target 후보를 정확히 하나 지정하세요.")
+        rows.append(
+            {
+                "video_id": video_id,
+                "target_status": "selected",
+                "frame_index": frame_index,
+                "candidate_id": candidate_id,
+            }
+        )
+    return pd.DataFrame(rows, columns=INITIAL_PLATE_TARGET_COLUMNS)
+
+
+def evaluate_initial_plate_selections(
+    selections: pd.DataFrame,
+    targets: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """자동 초기 선택을 수동 target과 비교하고 detector 누락은 분리한다."""
+    selection_columns = {
+        "video_id", "status", "frame_index", "candidate_id", "candidate_count",
+    }
+    if not selection_columns.issubset(selections.columns):
+        raise ValueError("초기 원판 선택 평가 columns가 부족합니다.")
+    if tuple(targets.columns) != INITIAL_PLATE_TARGET_COLUMNS:
+        raise ValueError("초기 원판 수동 target schema가 일치하지 않습니다.")
+    if (
+        selections["video_id"].duplicated().any()
+        or targets["video_id"].duplicated().any()
+    ):
+        raise ValueError("초기 원판 선택 평가는 video_id당 한 행이어야 합니다.")
+    if set(selections["video_id"].astype(str)) != set(
+        targets["video_id"].astype(str)
+    ):
+        raise ValueError("자동 선택과 수동 target video_id가 다릅니다.")
+
+    truth = targets.rename(
+        columns={
+            "frame_index": "target_frame_index",
+            "candidate_id": "target_candidate_id",
+        }
+    )
+    evaluated = selections.merge(
+        truth, on="video_id", how="left", validate="one_to_one"
+    )
+    outcomes = []
+    matches = []
+    for row in evaluated.itertuples(index=False):
+        if row.target_status == "target_missing":
+            outcome, matches_manual = "target_missing", pd.NA
+        elif row.target_status == "no_plate":
+            matches_manual = pd.NA
+            if row.status == "selected":
+                outcome = "false_positive"
+            elif row.status == "confirmation_required":
+                outcome = "confirmation_required_no_plate"
+            else:
+                outcome = "correct_no_plate"
+        elif row.target_status == "selected":
+            matched = False
+            if row.status == "selected":
+                matched = (
+                    int(row.frame_index) == int(row.target_frame_index)
+                    and int(row.candidate_id) == int(row.target_candidate_id)
+                )
+            matches_manual = bool(matched)
+            if matched:
+                outcome = "correct"
+            elif row.status == "selected":
+                outcome = "wrong_target"
+            elif row.status == "confirmation_required":
+                outcome = "confirmation_required"
+            else:
+                outcome = "not_available"
+        else:
+            raise ValueError(f"알 수 없는 target_status: {row.target_status}")
+        outcomes.append(outcome)
+        matches.append(matches_manual)
+
+    evaluated["matches_manual"] = pd.array(matches, dtype="boolean")
+    evaluated["selection_outcome"] = outcomes
+    evaluable_count = int(evaluated["target_status"].eq("selected").sum())
+    correct_count = int(evaluated["selection_outcome"].eq("correct").sum())
+    confirmation_count = int(evaluated["status"].eq("confirmation_required").sum())
+    not_available_count = int(evaluated["status"].eq("not_available").sum())
+    summary = {
+        "video_count": len(evaluated),
+        "selection_evaluable_count": evaluable_count,
+        "selected_count": int(evaluated["status"].eq("selected").sum()),
+        "correct_selection_count": correct_count,
+        "wrong_auto_selection_count": int(
+            evaluated["selection_outcome"].eq("wrong_target").sum()
+        ),
+        "confirmation_required_count": confirmation_count,
+        "not_available_count": not_available_count,
+        "target_missing_count": int(
+            evaluated["selection_outcome"].eq("target_missing").sum()
+        ),
+        "no_plate_count": int(evaluated["target_status"].eq("no_plate").sum()),
+        "false_positive_count": int(
+            evaluated["selection_outcome"].eq("false_positive").sum()
+        ),
+        "multi_candidate_video_count": int(
+            pd.to_numeric(evaluated["candidate_count"], errors="raise").gt(1).sum()
+        ),
+        "auto_selection_accuracy": (
+            correct_count / evaluable_count if evaluable_count else None
+        ),
+        "manual_review_rate": (
+            (confirmation_count + not_available_count) / len(evaluated)
+            if len(evaluated) else None
+        ),
+    }
+    return evaluated, summary
+
+
+def decide_initial_plate_selection_evaluation(
+    summary: Mapping[str, Any],
+    group_summary: pd.DataFrame,
+) -> str:
+    """오선택이 없고 A/B/C마다 비교 가능한 정답이 있을 때만 통과한다."""
+    if (
+        int(summary["wrong_auto_selection_count"]) > 0
+        or int(summary["false_positive_count"]) > 0
+    ):
+        return "hold"
+    required_columns = {"group", "selection_evaluable_count"}
+    if not required_columns.issubset(group_summary.columns):
+        raise ValueError("그룹별 초기 원판 선택 평가 columns가 부족합니다.")
+    evaluable_groups = set(
+        group_summary.loc[
+            pd.to_numeric(
+                group_summary["selection_evaluable_count"], errors="raise"
+            ).gt(0),
+            "group",
+        ].astype(str)
+    )
+    return "pass" if evaluable_groups == {"A", "B", "C"} else "insufficient_evidence"
 
 
 def opencv_bbox_to_yolo(
