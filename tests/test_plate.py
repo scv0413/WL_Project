@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import snatch_analysis.plate as plate_module
+from snatch_analysis.pipeline import save_json_atomically
 from snatch_analysis.plate import (
     PILOT_GROUND_TRUTH_COLUMNS,
     PLATE_CANDIDATE_COLUMNS,
@@ -391,6 +392,162 @@ def _plate_candidates(rows: list[dict[str, float | int | str]]) -> pd.DataFrame:
 
 
 class PlateTrackingTests(unittest.TestCase):
+    def test_auto_selects_the_only_initial_plate_candidate(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 3,
+                    "timestamp_seconds": 0.1, "candidate_id": 7,
+                    "bbox_x1": 10.0, "bbox_y1": 20.0, "bbox_x2": 30.0,
+                    "bbox_y2": 40.0, "bbox_confidence": 0.8,
+                    "center_x_px": 20.0, "center_y_px": 30.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.3,
+                }
+            ]
+        )
+
+        selection = plate_module.select_initial_plate_candidate(candidates)
+
+        self.assertEqual(selection["status"], "selected")
+        self.assertEqual(selection["reason"], "single_candidate")
+        self.assertEqual(selection["frame_index"], 3)
+        self.assertEqual(selection["candidate_id"], 7)
+        self.assertEqual(selection["candidate_count"], 1)
+
+    def test_auto_selects_initial_candidate_nearest_to_lifter(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 4,
+                    "bbox_x1": 10.0, "bbox_y1": 10.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.7,
+                    "center_x_px": 20.0, "center_y_px": 20.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.2,
+                },
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 9,
+                    "bbox_x1": 70.0, "bbox_y1": 70.0, "bbox_x2": 90.0,
+                    "bbox_y2": 90.0, "bbox_confidence": 0.95,
+                    "center_x_px": 80.0, "center_y_px": 80.0,
+                    "center_x_normalized": 0.8, "center_y_normalized": 0.8,
+                },
+            ]
+        )
+        lifter_centers = pd.DataFrame(
+            {"frame_index": [0], "center_x_px": [25.0], "center_y_px": [25.0]}
+        )
+
+        selection = plate_module.select_initial_plate_candidate(
+            candidates, lifter_centers=lifter_centers
+        )
+
+        self.assertEqual(selection["status"], "selected")
+        self.assertEqual(selection["reason"], "nearest_lifter")
+        self.assertEqual(selection["candidate_id"], 4)
+        self.assertGreater(selection["distance_margin"], 0.1)
+
+    def test_auto_selection_requires_confirmation_for_equal_distances(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 1,
+                    "bbox_x1": 30.0, "bbox_y1": 40.0, "bbox_x2": 50.0,
+                    "bbox_y2": 60.0, "bbox_confidence": 0.9,
+                    "center_x_px": 40.0, "center_y_px": 50.0,
+                    "center_x_normalized": 0.4, "center_y_normalized": 0.5,
+                },
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 2,
+                    "bbox_x1": 50.0, "bbox_y1": 40.0, "bbox_x2": 70.0,
+                    "bbox_y2": 60.0, "bbox_confidence": 0.8,
+                    "center_x_px": 60.0, "center_y_px": 50.0,
+                    "center_x_normalized": 0.6, "center_y_normalized": 0.5,
+                },
+            ]
+        )
+        lifter_centers = pd.DataFrame(
+            {"frame_index": [0], "center_x_px": [50.0], "center_y_px": [50.0]}
+        )
+
+        selection = plate_module.select_initial_plate_candidate(
+            candidates, lifter_centers=lifter_centers
+        )
+
+        self.assertEqual(selection["status"], "confirmation_required")
+        self.assertEqual(selection["reason"], "ambiguous_candidates")
+        self.assertIsNone(selection["candidate_id"])
+        self.assertEqual(selection["distance_margin"], 0.0)
+
+    def test_auto_selection_marks_empty_candidates_not_available(self) -> None:
+        selection = plate_module.select_initial_plate_candidate(
+            pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS)
+        )
+
+        self.assertEqual(selection["status"], "not_available")
+        self.assertEqual(selection["reason"], "no_candidates")
+        self.assertIsNone(selection["frame_index"])
+        self.assertIsNone(selection["candidate_id"])
+        self.assertEqual(selection["candidate_count"], 0)
+
+    def test_auto_selection_treats_non_finite_lifter_center_as_missing(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 1,
+                    "bbox_x1": 10.0, "bbox_y1": 10.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.8,
+                    "center_x_px": 20.0, "center_y_px": 20.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.2,
+                },
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 2,
+                    "bbox_x1": 70.0, "bbox_y1": 70.0, "bbox_x2": 90.0,
+                    "bbox_y2": 90.0, "bbox_confidence": 0.7,
+                    "center_x_px": 80.0, "center_y_px": 80.0,
+                    "center_x_normalized": 0.8, "center_y_normalized": 0.8,
+                },
+            ]
+        )
+        for missing_value in (np.nan, pd.NA):
+            with self.subTest(missing_value=missing_value):
+                lifter_centers = pd.DataFrame(
+                    {
+                        "frame_index": [0], "center_x_px": [missing_value],
+                        "center_y_px": [25.0],
+                    }
+                )
+                selection = plate_module.select_initial_plate_candidate(
+                    candidates, lifter_centers=lifter_centers
+                )
+
+                self.assertEqual(selection["status"], "confirmation_required")
+                self.assertEqual(selection["reason"], "missing_lifter_center")
+                self.assertIsNone(selection["candidate_id"])
+                self.assertIsNone(selection["distance_margin"])
+
+    def test_auto_selection_rejects_non_finite_candidate_geometry(self) -> None:
+        candidates = _plate_candidates(
+            [
+                {
+                    "video_id": "a01_sn_f_01", "frame_index": 0,
+                    "timestamp_seconds": 0.0, "candidate_id": 0,
+                    "bbox_x1": 10.0, "bbox_y1": 10.0, "bbox_x2": 30.0,
+                    "bbox_y2": 30.0, "bbox_confidence": 0.8,
+                    "center_x_px": np.nan, "center_y_px": 20.0,
+                    "center_x_normalized": 0.2, "center_y_normalized": 0.2,
+                }
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "유한한"):
+            plate_module.select_initial_plate_candidate(candidates)
+
     def test_infers_plate_candidates_with_streaming_results(self) -> None:
         runner = getattr(plate_module, "infer_plate_video_candidates", None)
         self.assertTrue(callable(runner), "infer_plate_video_candidates is missing")
@@ -923,6 +1080,100 @@ class PlateTrackingTests(unittest.TestCase):
 
 
 class PlateNotebookSourceContractTests(unittest.TestCase):
+    @staticmethod
+    def _u11_cell_source(cell_id: str) -> str:
+        notebook = json.loads(
+            Path("notebooks/07_primary_plate_selection.ipynb").read_text(
+                encoding="utf-8"
+            )
+        )
+        return next(
+            "".join(cell["source"])
+            for cell in notebook["cells"]
+            if cell.get("id") == cell_id
+        )
+
+    def test_u11_notebook_is_source_only_and_compiles(self) -> None:
+        notebook = json.loads(
+            Path("notebooks/07_primary_plate_selection.ipynb").read_text(
+                encoding="utf-8"
+            )
+        )
+        code_cells = [
+            cell for cell in notebook["cells"] if cell["cell_type"] == "code"
+        ]
+
+        for cell in code_cells:
+            compile("".join(cell["source"]), cell.get("id", "u11-cell"), "exec")
+        self.assertTrue(
+            all(
+                cell.get("execution_count") is None and not cell.get("outputs")
+                for cell in code_cells
+            )
+        )
+
+    def test_u11_no_candidate_run_records_na_and_removes_stale_track(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            video_id = "a01_sn_f_01"
+            u10_root = root / "u10"
+            u9_root = root / "u9"
+            u11_root = root / "u11"
+            (u10_root / video_id).mkdir(parents=True)
+            (u9_root / video_id).mkdir(parents=True)
+            stale_track = u11_root / video_id / "plate_track.csv"
+            stale_track.parent.mkdir(parents=True)
+            stale_track.write_text("stale", encoding="utf-8")
+            pd.DataFrame(columns=PLATE_CANDIDATE_COLUMNS).to_csv(
+                u10_root / video_id / "plate_candidates.csv", index=False
+            )
+            pd.DataFrame(
+                columns=["frame_index", "bbox_center_x", "bbox_center_y"]
+            ).to_csv(u9_root / video_id / "pose_keypoints.csv", index=False)
+            (u10_root / video_id / "run_summary.json").write_text(
+                json.dumps({"plate": {"track_status": "not_available"}}),
+                encoding="utf-8",
+            )
+            namespace = {
+                "RUN_U11_AUTO_SELECTION": True,
+                "U11_ARTIFACT_ROOT": u11_root,
+                "U11_SELECTION_PATH": u11_root / "initial_selections.csv",
+                "U11_SUMMARY_PATH": u11_root / "run_summary.json",
+                "U11_CONTACT_SHEET_PATH": u11_root / "contact_sheet.png",
+                "U11_VIDEO_IDS": (video_id,),
+                "U11_AMBIGUITY_MARGIN": 0.1,
+                "U10_EVALUATION_ROOT": u10_root,
+                "U9_POSE_ROOT": u9_root,
+                "pilot_rows": pd.DataFrame(
+                    {
+                        "video_id": [video_id], "group": ["A"],
+                        "frame_count": [10], "fps": [30.0],
+                    }
+                ),
+                "pd": pd,
+                "json": json,
+                "select_initial_plate_candidate": (
+                    plate_module.select_initial_plate_candidate
+                ),
+                "select_primary_plate_track": select_primary_plate_track,
+                "save_plate_track": save_plate_track,
+                "save_json_atomically": save_json_atomically,
+                "display": lambda value: None,
+            }
+
+            exec(self._u11_cell_source("u11-selection"), namespace)
+
+            summary = json.loads(
+                (u11_root / "run_summary.json").read_text(encoding="utf-8")
+            )
+            selections = pd.read_csv(u11_root / "initial_selections.csv")
+            self.assertEqual(summary["not_available_count"], 1)
+            self.assertEqual(summary["manual_comparison_count"], 0)
+            self.assertIsNone(summary["track_coverage"])
+            self.assertEqual(summary["track_evaluated_frame_count"], 0)
+            self.assertTrue(pd.isna(selections.loc[0, "track_ok_frame_count"]))
+            self.assertFalse(stale_track.exists())
+
     def test_training_uses_absolute_project_directory_to_reuse_saved_weight(self) -> None:
         notebook = json.loads(
             Path("notebooks/03_plate_detection.ipynb").read_text(encoding="utf-8")

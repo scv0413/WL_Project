@@ -781,6 +781,89 @@ def save_pilot_ground_truth(
     _write_csv_atomically(validated, output_path)
 
 
+def select_initial_plate_candidate(
+    candidates: pd.DataFrame,
+    *,
+    lifter_centers: pd.DataFrame | None = None,
+    ambiguity_margin: float = 0.1,
+) -> dict[str, Any]:
+    """첫 후보 frame에서 단일 후보 또는 선수와 가장 가까운 원판을 고른다."""
+    if not 0 <= ambiguity_margin <= 1:
+        raise ValueError("ambiguity_margin은 0 이상 1 이하여야 합니다.")
+    _validate_plate_table(candidates, PLATE_CANDIDATE_COLUMNS, "후보")
+    if candidates.empty:
+        return {
+            "status": "not_available",
+            "reason": "no_candidates",
+            "frame_index": None,
+            "candidate_id": None,
+            "candidate_count": 0,
+            "distance_margin": None,
+        }
+    if candidates["video_id"].astype(str).nunique() != 1:
+        raise ValueError("원판 후보는 하나의 video_id만 포함해야 합니다.")
+
+    frame_indices = pd.to_numeric(candidates["frame_index"], errors="raise")
+    first_frame_index = int(frame_indices.min())
+    first_candidates = candidates.loc[frame_indices.eq(first_frame_index)].copy()
+    coordinate_columns = (
+        "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2",
+        "center_x_px", "center_y_px",
+    )
+    for column in coordinate_columns:
+        first_candidates[column] = pd.to_numeric(
+            first_candidates[column], errors="raise"
+        ).astype(float)
+    if not np.isfinite(first_candidates[list(coordinate_columns)]).all().all():
+        raise ValueError("원판 후보 좌표는 유한한 값이어야 합니다.")
+    for row in first_candidates.itertuples(index=False):
+        _validate_xyxy_bbox(
+            (row.bbox_x1, row.bbox_y1, row.bbox_x2, row.bbox_y2),
+            "원판 후보",
+        )
+    result = {
+        "status": "confirmation_required",
+        "reason": "",
+        "frame_index": first_frame_index,
+        "candidate_id": None,
+        "candidate_count": len(first_candidates),
+        "distance_margin": None,
+    }
+    if len(first_candidates) == 1:
+        result.update(
+            status="selected",
+            reason="single_candidate",
+            candidate_id=int(first_candidates.iloc[0]["candidate_id"]),
+        )
+        return result
+
+    lifter_center = _lifter_centers_by_frame(lifter_centers).get(first_frame_index)
+    if lifter_center is None:
+        result["reason"] = "missing_lifter_center"
+        return result
+    first_candidates["lifter_distance"] = np.hypot(
+        first_candidates["center_x_px"] - lifter_center[0],
+        first_candidates["center_y_px"] - lifter_center[1],
+    )
+    ranked = first_candidates.sort_values(
+        ["lifter_distance", "candidate_id"]
+    ).reset_index(drop=True)
+    nearest_distance = float(ranked.loc[0, "lifter_distance"])
+    second_distance = float(ranked.loc[1, "lifter_distance"])
+    distance_margin = (second_distance - nearest_distance) / max(second_distance, 1e-9)
+    result["distance_margin"] = distance_margin
+    if distance_margin <= ambiguity_margin:
+        result["reason"] = "ambiguous_candidates"
+        return result
+
+    result.update(
+        status="selected",
+        reason="nearest_lifter",
+        candidate_id=int(ranked.loc[0, "candidate_id"]),
+    )
+    return result
+
+
 def select_primary_plate_track(
     candidates: pd.DataFrame,
     *,
@@ -1255,10 +1338,14 @@ def _lifter_centers_by_frame(
         raise ValueError("lifter_centers에 frame_index와 중심 좌표가 필요합니다.")
     if lifter_centers.duplicated("frame_index").any():
         raise ValueError("lifter_centers frame_index는 고유해야 합니다.")
-    return {
-        int(row.frame_index): (float(row.center_x_px), float(row.center_y_px))
-        for row in lifter_centers.loc[:, sorted(required_columns)].itertuples(index=False)
-    }
+    centers = {}
+    for row in lifter_centers.loc[:, sorted(required_columns)].itertuples(index=False):
+        if pd.isna(row.center_x_px) or pd.isna(row.center_y_px):
+            continue
+        center = (float(row.center_x_px), float(row.center_y_px))
+        if all(math.isfinite(value) for value in center):
+            centers[int(row.frame_index)] = center
+    return centers
 
 
 def _select_continuous_plate(
