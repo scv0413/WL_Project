@@ -1530,5 +1530,72 @@ class PlateNotebookSourceContractTests(unittest.TestCase):
         self.assertNotIn("read_video_frame(", source)
 
 
+class PlateTrackingEvaluationNotebookContractTests(unittest.TestCase):
+    NOTEBOOK_PATH = Path("notebooks/08_plate_tracking_evaluation.ipynb")
+
+    @classmethod
+    def _notebook(cls) -> dict:
+        if not cls.NOTEBOOK_PATH.exists():
+            raise AssertionError("U11 Task 3 notebook is missing")
+        return json.loads(cls.NOTEBOOK_PATH.read_text(encoding="utf-8"))
+
+    @classmethod
+    def _cell_source(cls, cell_id: str) -> str:
+        return next(
+            "".join(cell["source"])
+            for cell in cls._notebook()["cells"]
+            if cell.get("id") == cell_id
+        )
+
+    def test_u11_task3_notebook_is_source_only_and_compiles(self) -> None:
+        code_cells = [
+            cell for cell in self._notebook()["cells"]
+            if cell["cell_type"] == "code"
+        ]
+
+        for cell in code_cells:
+            compile("".join(cell["source"]), cell.get("id", "task3-cell"), "exec")
+        self.assertTrue(
+            all(
+                cell.get("execution_count") is None and not cell.get("outputs")
+                for cell in code_cells
+            )
+        )
+
+    def test_u11_task3_defaults_to_five_pending_frames_per_video(self) -> None:
+        namespace = {"PROJECT_ROOT": Path("/project")}
+
+        exec(self._cell_source("u11-task3-settings"), namespace)
+
+        self.assertEqual(len(namespace["U11_TASK3_VIDEO_IDS"]), 9)
+        self.assertEqual(namespace["U11_TASK3_SAMPLE_COUNT"], 5)
+        self.assertFalse(namespace["RUN_U11_TASK3_LABELING"])
+        self.assertFalse(namespace["OVERWRITE_U11_TASK3_LABELS"])
+        self.assertFalse(namespace["RUN_U11_TASK3_EVALUATION"])
+        self.assertEqual(namespace["U11_TASK3_ANNOTATOR"], "")
+
+    def test_u11_task3_reuses_current_tracker_and_evaluator(self) -> None:
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in self._notebook()["cells"]
+        )
+
+        self.assertIn("selectROI", source)
+        self.assertIn("save_yolo_plate_label", source)
+        self.assertIn("evaluate_plate_video", source)
+        self.assertIn("aggregate_plate_evaluations", source)
+        self.assertNotIn("from ultralytics import YOLO", source)
+
+    def test_u11_task3_decodes_each_video_once_per_review_step(self) -> None:
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in self._notebook()["cells"]
+        )
+
+        self.assertIn("iter_video_frames", source)
+        self.assertIn("load_selected_frames", source)
+        self.assertNotIn("read_video_frame", source)
+
+
 if __name__ == "__main__":
     unittest.main()
