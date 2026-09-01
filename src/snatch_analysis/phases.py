@@ -1,6 +1,7 @@
 """Manual snatch events and deterministic phase assignment."""
 
 from collections.abc import Mapping
+import math
 from numbers import Integral
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -24,6 +25,168 @@ _EVENT_COLUMNS = [
     "notes",
     "na_reason",
 ]
+
+
+def propose_bar_off_floor_event(
+    plate_track: pd.DataFrame,
+    *,
+    upward_speed_threshold: float = 0.1,
+    persistence_frames: int = 2,
+    max_missing_gap_frames: int = 2,
+) -> dict[str, object]:
+    """Propose the first frame of sustained upward plate motion."""
+    required_columns = {
+        "frame_index",
+        "timestamp_seconds",
+        "center_y_normalized",
+        "status",
+    }
+    missing_columns = sorted(required_columns - set(plate_track.columns))
+    if missing_columns:
+        raise ValueError(
+            "plate track columns missing: " + ", ".join(missing_columns)
+        )
+    if isinstance(upward_speed_threshold, bool):
+        raise ValueError("upward_speed_threshold must be positive")
+    try:
+        normalized_speed_threshold = float(upward_speed_threshold)
+    except (TypeError, ValueError) as error:
+        raise ValueError("upward_speed_threshold must be positive") from error
+    if (
+        not math.isfinite(normalized_speed_threshold)
+        or normalized_speed_threshold <= 0
+    ):
+        raise ValueError("upward_speed_threshold must be positive")
+    if (
+        isinstance(persistence_frames, bool)
+        or not isinstance(persistence_frames, Integral)
+        or persistence_frames <= 0
+    ):
+        raise ValueError("persistence_frames must be a positive integer")
+    if (
+        isinstance(max_missing_gap_frames, bool)
+        or not isinstance(max_missing_gap_frames, Integral)
+        or max_missing_gap_frames <= 0
+    ):
+        raise ValueError("max_missing_gap_frames must be a positive integer")
+
+    track = plate_track[
+        [
+            "frame_index",
+            "timestamp_seconds",
+            "center_y_normalized",
+            "status",
+        ]
+    ].copy()
+    for column in ("frame_index", "timestamp_seconds", "center_y_normalized"):
+        track[column] = pd.to_numeric(track[column], errors="coerce")
+
+    result = {
+        "event_name": "bar_off_floor",
+        "frame_index": None,
+        "timestamp_seconds": None,
+        "status": "not_available",
+        "reason": "no_sustained_upward_motion",
+        "upward_speed_threshold": normalized_speed_threshold,
+        "persistence_frames": int(persistence_frames),
+        "max_missing_gap_frames": int(max_missing_gap_frames),
+    }
+    qualifying_steps = 0
+    unavailable_gap = 0
+    run_start = None
+    previous = None
+    previous_frame_index = None
+    for current in track.itertuples(index=False):
+        frame_index_is_valid = (
+            pd.notna(current.frame_index)
+            and math.isfinite(float(current.frame_index))
+            and float(current.frame_index).is_integer()
+        )
+        current_frame_index = (
+            int(current.frame_index) if frame_index_is_valid else None
+        )
+        current_is_valid = (
+            not pd.isna(current.status)
+            and current.status == "ok"
+            and frame_index_is_valid
+            and all(
+                pd.notna(value) and math.isfinite(float(value))
+                for value in (
+                    current.timestamp_seconds,
+                    current.center_y_normalized,
+                )
+            )
+        )
+        if current_frame_index is not None and previous_frame_index is not None:
+            if current_frame_index > previous_frame_index:
+                unavailable_gap += max(
+                    0, current_frame_index - previous_frame_index - 1
+                )
+            else:
+                unavailable_gap += 1
+
+        if not current_is_valid:
+            unavailable_gap += 1
+            qualifying_steps = 0
+            run_start = None
+            if unavailable_gap > max_missing_gap_frames:
+                result["reason"] = "plate_gap_too_long"
+                return result
+            previous = current
+            previous_frame_index = current_frame_index
+            continue
+
+        if unavailable_gap:
+            qualifying_steps = 0
+            run_start = None
+            if unavailable_gap > max_missing_gap_frames:
+                result["reason"] = "plate_gap_too_long"
+                return result
+            unavailable_gap = 0
+            previous = current
+            previous_frame_index = current_frame_index
+            continue
+
+        if previous is None:
+            previous = current
+            previous_frame_index = current_frame_index
+            continue
+
+        if current.timestamp_seconds <= previous.timestamp_seconds:
+            unavailable_gap = 1
+            qualifying_steps = 0
+            run_start = None
+            previous = current
+            previous_frame_index = current_frame_index
+            continue
+
+        upward_speed = (
+            previous.center_y_normalized - current.center_y_normalized
+        ) / (current.timestamp_seconds - previous.timestamp_seconds)
+        if upward_speed < normalized_speed_threshold:
+            qualifying_steps = 0
+            run_start = None
+            previous = current
+            previous_frame_index = current_frame_index
+            continue
+
+        if qualifying_steps == 0:
+            run_start = previous
+        qualifying_steps += 1
+        if qualifying_steps >= persistence_frames:
+            result.update(
+                {
+                    "frame_index": int(run_start.frame_index),
+                    "timestamp_seconds": float(run_start.timestamp_seconds),
+                    "status": "ok",
+                    "reason": "",
+                }
+            )
+            return result
+        previous = current
+        previous_frame_index = current_frame_index
+
+    return result
 
 
 def validate_phase_events(

@@ -13,6 +13,7 @@ import pandas as pd
 from snatch_analysis.phases import (
     build_phase_by_frame,
     prepare_phase_annotations,
+    propose_bar_off_floor_event,
     validate_phase_events,
 )
 
@@ -36,6 +37,176 @@ NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "02_pose_baseline.ipynb"
 
 
 class PhaseTests(unittest.TestCase):
+    def test_proposes_frame_before_sustained_upward_plate_motion(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 2, 3],
+                "timestamp_seconds": [0.0, 0.1, 0.2, 0.3],
+                "center_y_normalized": [0.800, 0.799, 0.780, 0.750],
+                "status": ["ok"] * 4,
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=2,
+        )
+
+        self.assertEqual(proposal["event_name"], "bar_off_floor")
+        self.assertEqual(proposal["frame_index"], 1)
+        self.assertAlmostEqual(proposal["timestamp_seconds"], 0.1)
+        self.assertEqual(proposal["status"], "ok")
+        self.assertEqual(proposal["reason"], "")
+
+    def test_ignores_one_upward_step_without_required_persistence(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 2, 3],
+                "timestamp_seconds": [0.0, 0.1, 0.2, 0.3],
+                "center_y_normalized": [0.80, 0.78, 0.78, 0.78],
+                "status": ["ok"] * 4,
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=2,
+        )
+
+        self.assertEqual(proposal["status"], "not_available")
+        self.assertEqual(proposal["reason"], "no_sustained_upward_motion")
+        self.assertIsNone(proposal["frame_index"])
+
+    def test_reports_a_long_plate_gap_before_motion(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 2, 3, 4, 5],
+                "timestamp_seconds": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+                "center_y_normalized": [0.8, pd.NA, pd.NA, pd.NA, 0.78, 0.75],
+                "status": ["ok", "missing", "missing", "missing", "ok", "ok"],
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=2,
+        )
+
+        self.assertEqual(proposal["status"], "not_available")
+        self.assertEqual(proposal["reason"], "plate_gap_too_long")
+
+    def test_allows_a_plate_gap_equal_to_the_configured_maximum(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 2, 3, 4],
+                "timestamp_seconds": [0.0, 0.1, 0.2, 0.3, 0.4],
+                "center_y_normalized": [0.8, pd.NA, 0.8, 0.78, 0.75],
+                "status": ["ok", "missing", "ok", "ok", "ok"],
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=1,
+        )
+
+        self.assertEqual(proposal["status"], "ok")
+        self.assertEqual(proposal["frame_index"], 2)
+
+    def test_reports_missing_sparse_frame_indices_as_a_long_gap(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 4, 5, 6],
+                "timestamp_seconds": [0.0, 0.4, 0.5, 0.6],
+                "center_y_normalized": [0.8, 0.8, 0.78, 0.75],
+                "status": ["ok"] * 4,
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=2,
+        )
+
+        self.assertEqual(proposal["status"], "not_available")
+        self.assertEqual(proposal["reason"], "plate_gap_too_long")
+
+    def test_combines_invalid_rows_and_absent_indices_into_one_gap(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 5, 6, 7],
+                "timestamp_seconds": [0.0, 0.1, 0.5, 0.6, 0.7],
+                "center_y_normalized": [0.8, pd.NA, 0.8, 0.78, 0.75],
+                "status": ["ok", "missing", "ok", "ok", "ok"],
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=2,
+        )
+
+        self.assertEqual(proposal["status"], "not_available")
+        self.assertEqual(proposal["reason"], "plate_gap_too_long")
+
+    def test_treats_nullable_status_as_a_missing_plate_row(self) -> None:
+        track = pd.DataFrame(
+            {
+                "frame_index": [0, 1, 2, 3, 4],
+                "timestamp_seconds": [0.0, 0.1, 0.2, 0.3, 0.4],
+                "center_y_normalized": [0.8, 0.8, 0.8, 0.78, 0.75],
+                "status": pd.Series(
+                    ["ok", pd.NA, "ok", "ok", "ok"], dtype="string"
+                ),
+            }
+        )
+
+        proposal = propose_bar_off_floor_event(
+            track,
+            upward_speed_threshold=0.1,
+            persistence_frames=2,
+            max_missing_gap_frames=1,
+        )
+
+        self.assertEqual(proposal["status"], "ok")
+        self.assertEqual(proposal["frame_index"], 2)
+
+    def test_validates_bar_off_floor_proposal_inputs_and_settings(self) -> None:
+        valid_track = pd.DataFrame(
+            {
+                "frame_index": [0, 1],
+                "timestamp_seconds": [0.0, 0.1],
+                "center_y_normalized": [0.8, 0.7],
+                "status": ["ok", "ok"],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "columns missing"):
+            propose_bar_off_floor_event(valid_track.drop(columns="status"))
+
+        for settings in (
+            {"upward_speed_threshold": 0},
+            {"upward_speed_threshold": None},
+            {"upward_speed_threshold": "invalid"},
+            {"persistence_frames": 0},
+            {"max_missing_gap_frames": 0},
+        ):
+            with self.subTest(settings=settings):
+                with self.assertRaises(ValueError):
+                    propose_bar_off_floor_event(valid_track, **settings)
+
     def test_assigns_every_frame_by_the_phase_boundary_contract(self) -> None:
         phases = build_phase_by_frame("b00_sn_f_01", VALID_EVENTS, frame_count=10)
 
