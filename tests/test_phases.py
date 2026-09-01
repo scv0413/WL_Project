@@ -37,7 +37,7 @@ NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "02_pose_baseline.ipynb"
 
 
 class PhaseTests(unittest.TestCase):
-    def test_proposes_frame_before_sustained_upward_plate_motion(self) -> None:
+    def test_proposes_first_frame_of_sustained_upward_plate_motion(self) -> None:
         track = pd.DataFrame(
             {
                 "frame_index": [0, 1, 2, 3],
@@ -55,8 +55,8 @@ class PhaseTests(unittest.TestCase):
         )
 
         self.assertEqual(proposal["event_name"], "bar_off_floor")
-        self.assertEqual(proposal["frame_index"], 1)
-        self.assertAlmostEqual(proposal["timestamp_seconds"], 0.1)
+        self.assertEqual(proposal["frame_index"], 2)
+        self.assertAlmostEqual(proposal["timestamp_seconds"], 0.2)
         self.assertEqual(proposal["status"], "ok")
         self.assertEqual(proposal["reason"], "")
 
@@ -119,7 +119,7 @@ class PhaseTests(unittest.TestCase):
         )
 
         self.assertEqual(proposal["status"], "ok")
-        self.assertEqual(proposal["frame_index"], 2)
+        self.assertEqual(proposal["frame_index"], 3)
 
     def test_reports_missing_sparse_frame_indices_as_a_long_gap(self) -> None:
         track = pd.DataFrame(
@@ -181,7 +181,7 @@ class PhaseTests(unittest.TestCase):
         )
 
         self.assertEqual(proposal["status"], "ok")
-        self.assertEqual(proposal["frame_index"], 2)
+        self.assertEqual(proposal["frame_index"], 3)
 
     def test_validates_bar_off_floor_proposal_inputs_and_settings(self) -> None:
         valid_track = pd.DataFrame(

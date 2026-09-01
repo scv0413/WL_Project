@@ -171,7 +171,7 @@ def propose_bar_off_floor_event(
             continue
 
         if qualifying_steps == 0:
-            run_start = previous
+            run_start = current
         qualifying_steps += 1
         if qualifying_steps >= persistence_frames:
             result.update(
