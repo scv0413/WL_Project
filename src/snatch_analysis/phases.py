@@ -189,6 +189,116 @@ def propose_bar_off_floor_event(
     return result
 
 
+def summarize_bar_off_floor_timing_experiment(
+    trials: pd.DataFrame,
+) -> dict[str, object]:
+    """Summarize the fixed A/B/C manual-versus-assisted timing experiment."""
+    required_columns = (
+        "video_id",
+        "group",
+        "method",
+        "review_seconds",
+        "status",
+    )
+    missing_columns = sorted(set(required_columns) - set(trials.columns))
+    if missing_columns:
+        raise ValueError(
+            "timing experiment columns missing: " + ", ".join(missing_columns)
+        )
+
+    experiment = trials[list(required_columns)].copy()
+    if experiment["video_id"].duplicated().any():
+        raise ValueError("timing experiment video_id must be unique")
+    experiment["group"] = experiment["group"].astype(str).str.upper()
+    experiment["method"] = experiment["method"].astype(str).str.lower()
+    experiment["status"] = experiment["status"].astype(str).str.lower()
+
+    invalid_groups = sorted(set(experiment["group"]) - {"A", "B", "C"})
+    invalid_methods = sorted(
+        set(experiment["method"]) - {"manual", "assisted"}
+    )
+    invalid_statuses = sorted(
+        set(experiment["status"]) - {"pending", "complete", "failed"}
+    )
+    if invalid_groups:
+        raise ValueError(
+            "unknown timing experiment group: " + ", ".join(invalid_groups)
+        )
+    if invalid_methods:
+        raise ValueError(
+            "unknown timing experiment method: " + ", ".join(invalid_methods)
+        )
+    if invalid_statuses:
+        raise ValueError(
+            "unknown timing experiment status: " + ", ".join(invalid_statuses)
+        )
+    if experiment.duplicated(["group", "method"]).any():
+        raise ValueError("timing experiment allows one trial per group and method")
+
+    complete = experiment.loc[experiment["status"].eq("complete")].copy()
+    complete["review_seconds"] = pd.to_numeric(
+        complete["review_seconds"], errors="coerce"
+    )
+    invalid_seconds = complete["review_seconds"].map(
+        lambda value: pd.isna(value)
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    )
+    if invalid_seconds.any():
+        raise ValueError("complete timing trials require positive review_seconds")
+    manual = complete.loc[complete["method"].eq("manual"), "review_seconds"]
+    assisted = complete.loc[
+        complete["method"].eq("assisted"), "review_seconds"
+    ]
+    manual_median = float(manual.median()) if not manual.empty else None
+    assisted_median = float(assisted.median()) if not assisted.empty else None
+    reduction_ratio = (
+        (manual_median - assisted_median) / manual_median
+        if manual_median is not None and assisted_median is not None
+        else None
+    )
+
+    faster_group_count = 0
+    for group in ("A", "B", "C"):
+        group_trials = complete.loc[complete["group"].eq(group)].set_index(
+            "method"
+        )
+        if {"manual", "assisted"}.issubset(group_trials.index):
+            faster_group_count += int(
+                group_trials.loc["assisted", "review_seconds"]
+                < group_trials.loc["manual", "review_seconds"]
+            )
+
+    expected_pairs = {
+        (group, method)
+        for group in "ABC"
+        for method in ("manual", "assisted")
+    }
+    completed_pairs = set(zip(complete["group"], complete["method"]))
+    is_complete = completed_pairs == expected_pairs
+    gate_pass = bool(
+        is_complete
+        and reduction_ratio is not None
+        and reduction_ratio >= 0.25
+        and faster_group_count >= 2
+    )
+    return {
+        "status": "complete" if is_complete else "incomplete",
+        "complete_count": int(len(complete)),
+        "expected_count": 6,
+        "manual_median_seconds": manual_median,
+        "assisted_median_seconds": assisted_median,
+        "median_reduction_ratio": reduction_ratio,
+        "faster_group_count": faster_group_count,
+        "time_gate_pass": gate_pass,
+        "reason": ""
+        if gate_pass
+        else "time_gate_not_met"
+        if is_complete
+        else "incomplete_trials",
+    }
+
+
 def validate_phase_events(
     event_frames: Mapping[str, object],
     frame_count: int,

@@ -14,6 +14,7 @@ from snatch_analysis.phases import (
     build_phase_by_frame,
     prepare_phase_annotations,
     propose_bar_off_floor_event,
+    summarize_bar_off_floor_timing_experiment,
     validate_phase_events,
 )
 
@@ -37,6 +38,123 @@ NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "02_pose_baseline.ipynb"
 
 
 class PhaseTests(unittest.TestCase):
+    def test_passes_timing_gate_when_assistance_is_faster_enough(self) -> None:
+        trials = pd.DataFrame(
+            [
+                ["a08_sn_f_01", "A", "manual", 40.0, "complete"],
+                ["a02_sn_f_01", "A", "assisted", 20.0, "complete"],
+                ["b02_sn_f_01", "B", "manual", 30.0, "complete"],
+                ["b04_sn_f_01", "B", "assisted", 20.0, "complete"],
+                ["c03_sn_f_01", "C", "manual", 20.0, "complete"],
+                ["c04_sn_f_01", "C", "assisted", 20.0, "complete"],
+            ],
+            columns=[
+                "video_id",
+                "group",
+                "method",
+                "review_seconds",
+                "status",
+            ],
+        )
+
+        summary = summarize_bar_off_floor_timing_experiment(trials)
+
+        self.assertEqual(summary["status"], "complete")
+        self.assertEqual(summary["complete_count"], 6)
+        self.assertEqual(summary["manual_median_seconds"], 30.0)
+        self.assertEqual(summary["assisted_median_seconds"], 20.0)
+        self.assertAlmostEqual(summary["median_reduction_ratio"], 1 / 3)
+        self.assertEqual(summary["faster_group_count"], 2)
+        self.assertTrue(summary["time_gate_pass"])
+        self.assertEqual(summary["reason"], "")
+
+    def test_fails_timing_gate_when_median_reduction_is_too_small(self) -> None:
+        trials = pd.DataFrame(
+            [
+                ["a08_sn_f_01", "A", "manual", 30.0, "complete"],
+                ["a02_sn_f_01", "A", "assisted", 25.0, "complete"],
+                ["b02_sn_f_01", "B", "manual", 30.0, "complete"],
+                ["b04_sn_f_01", "B", "assisted", 25.0, "complete"],
+                ["c03_sn_f_01", "C", "manual", 30.0, "complete"],
+                ["c04_sn_f_01", "C", "assisted", 25.0, "complete"],
+            ],
+            columns=[
+                "video_id",
+                "group",
+                "method",
+                "review_seconds",
+                "status",
+            ],
+        )
+
+        summary = summarize_bar_off_floor_timing_experiment(trials)
+
+        self.assertAlmostEqual(summary["median_reduction_ratio"], 1 / 6)
+        self.assertEqual(summary["faster_group_count"], 3)
+        self.assertFalse(summary["time_gate_pass"])
+        self.assertEqual(summary["reason"], "time_gate_not_met")
+
+    def test_marks_partial_timing_experiment_as_incomplete(self) -> None:
+        trials = pd.DataFrame(
+            [
+                ["a08_sn_f_01", "A", "manual", 20.0, "complete"],
+                ["a02_sn_f_01", "A", "assisted", pd.NA, "pending"],
+            ],
+            columns=[
+                "video_id",
+                "group",
+                "method",
+                "review_seconds",
+                "status",
+            ],
+        )
+
+        summary = summarize_bar_off_floor_timing_experiment(trials)
+
+        self.assertEqual(summary["status"], "incomplete")
+        self.assertEqual(summary["complete_count"], 1)
+        self.assertFalse(summary["time_gate_pass"])
+        self.assertEqual(summary["reason"], "incomplete_trials")
+
+    def test_keeps_failed_timing_trial_out_of_the_gate(self) -> None:
+        trials = pd.DataFrame(
+            [
+                ["a08_sn_f_01", "A", "manual", 20.0, "failed"],
+            ],
+            columns=[
+                "video_id",
+                "group",
+                "method",
+                "review_seconds",
+                "status",
+            ],
+        )
+
+        summary = summarize_bar_off_floor_timing_experiment(trials)
+
+        self.assertEqual(summary["status"], "incomplete")
+        self.assertEqual(summary["complete_count"], 0)
+        self.assertFalse(summary["time_gate_pass"])
+        self.assertEqual(summary["reason"], "incomplete_trials")
+
+    def test_rejects_two_trials_for_the_same_group_and_method(self) -> None:
+        trials = pd.DataFrame(
+            [
+                ["a08_sn_f_01", "A", "manual", 20.0, "failed"],
+                ["a09_sn_f_01", "A", "manual", 18.0, "complete"],
+            ],
+            columns=[
+                "video_id",
+                "group",
+                "method",
+                "review_seconds",
+                "status",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "one trial per group and method"):
+            summarize_bar_off_floor_timing_experiment(trials)
+
     def test_proposes_first_frame_of_sustained_upward_plate_motion(self) -> None:
         track = pd.DataFrame(
             {
