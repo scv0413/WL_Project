@@ -24,6 +24,13 @@ VALID_EVENTS = {
     "catch_stable": 7,
     "recovery_stable": 9,
 }
+H_EVENTS = {
+    "bar_off_floor": 2,
+    "knee_pass": 4,
+    "max_extension": 6,
+    "catch_stable": 7,
+    "recovery_stable": None,
+}
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "02_pose_baseline.ipynb"
 
@@ -52,6 +59,114 @@ class PhaseTests(unittest.TestCase):
             phases["recovery_complete"].tolist(),
             [False] * 9 + [True],
         )
+        self.assertEqual(phases["phase_status"].tolist(), ["ok"] * 10)
+        self.assertEqual(phases["na_reason"].tolist(), [""] * 10)
+
+    def test_accepts_h_events_with_no_recovery_frame(self) -> None:
+        self.assertEqual(
+            validate_phase_events(H_EVENTS, frame_count=10, completion="h"),
+            H_EVENTS,
+        )
+
+    def test_rejects_completion_contract_mismatches(self) -> None:
+        with self.assertRaisesRegex(ValueError, "recovery_stable.*h"):
+            validate_phase_events(
+                {**H_EVENTS, "recovery_stable": 9},
+                frame_count=10,
+                completion="h",
+            )
+        with self.assertRaisesRegex(ValueError, "recovery_stable"):
+            validate_phase_events(H_EVENTS, frame_count=10, completion="f")
+        with self.assertRaisesRegex(ValueError, "unknown completion"):
+            validate_phase_events(VALID_EVENTS, frame_count=10, completion="x")
+
+    def test_marks_h_frames_after_catch_as_video_ended(self) -> None:
+        phases = build_phase_by_frame(
+            "b00_sn_h_01", H_EVENTS, frame_count=10, completion="h"
+        )
+
+        self.assertEqual(
+            phases["phase"].tolist(),
+            [
+                "Set-up",
+                "Set-up",
+                "First Pull",
+                "First Pull",
+                "Second Pull",
+                "Second Pull",
+                "Drop Under & Catch",
+                "Drop Under & Catch",
+                "N/A",
+                "N/A",
+            ],
+        )
+        self.assertEqual(
+            phases["phase_status"].tolist(),
+            ["ok"] * 8 + ["not_applicable"] * 2,
+        )
+        self.assertEqual(
+            phases["na_reason"].tolist(), [""] * 8 + ["video_ended"] * 2
+        )
+        self.assertTrue(phases["recovery_complete"].isna().all())
+
+    def test_reuses_legacy_f_source_without_na_reason(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            annotation_path = root / "phase_events.csv"
+            pd.DataFrame(
+                [
+                    ["b00_sn_f_01", name, frame, "coach", ""]
+                    for name, frame in VALID_EVENTS.items()
+                ],
+                columns=[
+                    "video_id",
+                    "event_name",
+                    "frame_index",
+                    "annotator",
+                    "notes",
+                ],
+            ).to_csv(annotation_path, index=False)
+
+            events, phases, action = prepare_phase_annotations(
+                video_id="b00_sn_f_01",
+                event_frames={},
+                frame_count=10,
+                annotation_path=annotation_path,
+                artifact_directory=root / "artifacts",
+            )
+
+            self.assertEqual(action, "reused")
+            self.assertEqual(events["na_reason"].tolist(), [""] * 5)
+            self.assertEqual(phases["phase"].iloc[-1], "Recovery")
+
+    def test_persists_h_recovery_as_nullable_video_ended(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            events, phases, action = prepare_phase_annotations(
+                video_id="b00_sn_h_01",
+                event_frames=H_EVENTS,
+                frame_count=10,
+                completion="h",
+                annotation_path=root / "phase_events.csv",
+                artifact_directory=root / "artifacts",
+            )
+
+            recovery = events.set_index("event_name").loc["recovery_stable"]
+            self.assertEqual(action, "created")
+            self.assertTrue(pd.isna(recovery["frame_index"]))
+            self.assertEqual(recovery["na_reason"], "video_ended")
+            self.assertEqual(
+                pd.read_csv(root / "phase_events.csv").columns.tolist(),
+                [
+                    "video_id",
+                    "event_name",
+                    "frame_index",
+                    "annotator",
+                    "notes",
+                    "na_reason",
+                ],
+            )
+            self.assertTrue(phases["recovery_complete"].isna().all())
 
     def test_rejects_duplicate_or_reversed_event_frames(self) -> None:
         invalid_cases = {
@@ -181,6 +296,7 @@ class PhaseTests(unittest.TestCase):
                 "b00_sn_f_01",
                 "unexpected_event",
                 5,
+                "",
                 "",
                 "",
             ]
