@@ -1,7 +1,7 @@
 # WL Project Agent Guide
 
 이 파일은 이 저장소에서 작업하는 모든 에이전트의 실행 원칙이다.
-제품 범위와 사용자 행동의 기준 문서는 `docs/plans/2026-08-05-001-feat-snatch-coach-analysis-v1-plan.md`이며, 이 파일은 그 범위를 구현할 때 지켜야 할 작업 규칙을 정의한다.
+제품 범위와 사용자 행동의 기준 문서는 `../WL_project_workspace/docs/plans/2026-08-05-001-feat-snatch-coach-analysis-v1-plan.md`이며, 이 파일은 그 범위를 구현할 때 지켜야 할 작업 규칙을 정의한다.
 
 ## Project Mission
 
@@ -122,10 +122,10 @@ WL_project/
 │       ├── visualization.py
 │       └── pipeline.py
 ├── tests/
-├── artifacts/
-└── docs/
-    └── plans/
+└── artifacts/
 ```
+
+계획·설계·작업 기록처럼 모델 실행에 직접 필요하지 않은 문서는 형제 경로인 `../WL_project_workspace/`에서 관리하며 Git에 포함하지 않는다.
 
 - `videos.csv`는 각 영상의 ID, 그룹, 사람 ID, 동작, `h/f`, 반복 인덱스, 경로, 영상 속성, 원판 유무와 읽기 상태를 기록한다.
 - `metadata.py`는 파일명 파싱과 manifest 생성을 담당한다.
