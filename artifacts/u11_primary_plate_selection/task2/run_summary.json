@@ -1,0 +1,23 @@
+{
+  "video_count": 9,
+  "selection_evaluable_count": 8,
+  "selected_count": 8,
+  "correct_selection_count": 8,
+  "wrong_auto_selection_count": 0,
+  "confirmation_required_count": 0,
+  "not_available_count": 1,
+  "target_missing_count": 0,
+  "no_plate_count": 1,
+  "false_positive_count": 0,
+  "multi_candidate_video_count": 1,
+  "auto_selection_accuracy": 1.0,
+  "manual_review_rate": 0.1111111111111111,
+  "status": "complete",
+  "decision": "pass",
+  "track_ok_frame_count": 852,
+  "track_evaluated_frame_count": 852,
+  "track_not_evaluated_frame_count": 82,
+  "total_frame_count": 934,
+  "track_coverage_reference": 1.0,
+  "ambiguity_margin": 0.1
+}

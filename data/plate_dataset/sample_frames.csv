@@ -1,0 +1,31 @@
+video_id,frame_index,analysis_phase,sampling_phase,setup_reference_override,image_filename,label_filename
+b00_sn_f_01,0,First Pull,Set-up,True,b00_sn_f_01_frame_0000.jpg,b00_sn_f_01_frame_0000.txt
+b00_sn_f_01,1,First Pull,First Pull,False,b00_sn_f_01_frame_0001.jpg,b00_sn_f_01_frame_0001.txt
+b00_sn_f_01,10,First Pull,First Pull,False,b00_sn_f_01_frame_0010.jpg,b00_sn_f_01_frame_0010.txt
+b00_sn_f_01,19,First Pull,First Pull,False,b00_sn_f_01_frame_0019.jpg,b00_sn_f_01_frame_0019.txt
+b00_sn_f_01,28,First Pull,First Pull,False,b00_sn_f_01_frame_0028.jpg,b00_sn_f_01_frame_0028.txt
+b00_sn_f_01,37,First Pull,First Pull,False,b00_sn_f_01_frame_0037.jpg,b00_sn_f_01_frame_0037.txt
+b00_sn_f_01,46,First Pull,First Pull,False,b00_sn_f_01_frame_0046.jpg,b00_sn_f_01_frame_0046.txt
+b00_sn_f_01,55,First Pull,First Pull,False,b00_sn_f_01_frame_0055.jpg,b00_sn_f_01_frame_0055.txt
+b00_sn_f_01,64,First Pull,First Pull,False,b00_sn_f_01_frame_0064.jpg,b00_sn_f_01_frame_0064.txt
+b00_sn_f_01,65,Second Pull,Second Pull,False,b00_sn_f_01_frame_0065.jpg,b00_sn_f_01_frame_0065.txt
+b00_sn_f_01,67,Second Pull,Second Pull,False,b00_sn_f_01_frame_0067.jpg,b00_sn_f_01_frame_0067.txt
+b00_sn_f_01,70,Second Pull,Second Pull,False,b00_sn_f_01_frame_0070.jpg,b00_sn_f_01_frame_0070.txt
+b00_sn_f_01,73,Second Pull,Second Pull,False,b00_sn_f_01_frame_0073.jpg,b00_sn_f_01_frame_0073.txt
+b00_sn_f_01,76,Second Pull,Second Pull,False,b00_sn_f_01_frame_0076.jpg,b00_sn_f_01_frame_0076.txt
+b00_sn_f_01,79,Second Pull,Second Pull,False,b00_sn_f_01_frame_0079.jpg,b00_sn_f_01_frame_0079.txt
+b00_sn_f_01,82,Second Pull,Second Pull,False,b00_sn_f_01_frame_0082.jpg,b00_sn_f_01_frame_0082.txt
+b00_sn_f_01,83,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0083.jpg,b00_sn_f_01_frame_0083.txt
+b00_sn_f_01,95,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0095.jpg,b00_sn_f_01_frame_0095.txt
+b00_sn_f_01,107,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0107.jpg,b00_sn_f_01_frame_0107.txt
+b00_sn_f_01,119,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0119.jpg,b00_sn_f_01_frame_0119.txt
+b00_sn_f_01,131,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0131.jpg,b00_sn_f_01_frame_0131.txt
+b00_sn_f_01,143,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0143.jpg,b00_sn_f_01_frame_0143.txt
+b00_sn_f_01,155,Drop Under & Catch,Drop Under & Catch,False,b00_sn_f_01_frame_0155.jpg,b00_sn_f_01_frame_0155.txt
+b00_sn_f_01,156,Recovery,Recovery,False,b00_sn_f_01_frame_0156.jpg,b00_sn_f_01_frame_0156.txt
+b00_sn_f_01,172,Recovery,Recovery,False,b00_sn_f_01_frame_0172.jpg,b00_sn_f_01_frame_0172.txt
+b00_sn_f_01,188,Recovery,Recovery,False,b00_sn_f_01_frame_0188.jpg,b00_sn_f_01_frame_0188.txt
+b00_sn_f_01,204,Recovery,Recovery,False,b00_sn_f_01_frame_0204.jpg,b00_sn_f_01_frame_0204.txt
+b00_sn_f_01,220,Recovery,Recovery,False,b00_sn_f_01_frame_0220.jpg,b00_sn_f_01_frame_0220.txt
+b00_sn_f_01,236,Recovery,Recovery,False,b00_sn_f_01_frame_0236.jpg,b00_sn_f_01_frame_0236.txt
+b00_sn_f_01,253,Recovery,Recovery,False,b00_sn_f_01_frame_0253.jpg,b00_sn_f_01_frame_0253.txt

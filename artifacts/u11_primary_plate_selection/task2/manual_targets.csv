@@ -1,0 +1,10 @@
+video_id,target_status,frame_index,candidate_id
+a02_sn_f_01,selected,0.0,0.0
+a06_sn_h_01,selected,0.0,0.0
+a08_sn_f_01,selected,0.0,0.0
+b02_sn_f_01,selected,0.0,0.0
+b04_sn_f_01,selected,0.0,0.0
+b05_sn_f_01,no_plate,,
+c03_sn_f_01,selected,0.0,0.0
+c04_sn_f_01,selected,0.0,0.0
+c05_sn_f_01,selected,0.0,0.0

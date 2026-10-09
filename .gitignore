@@ -15,11 +15,20 @@ __pycache__/
 # Local uv cache override
 .uv-cache/
 
-# Private or generated project data
-data/
-artifacts/
+# 원본 영상만 로컬에 유지하되 디렉터리는 생성
+data/raw/videos/*
+!data/raw/videos/.gitkeep
 
-# Model and export artifacts
-*.pt
-*.pth
-*.onnx
+# 이미지 파일은 로컬에만 유지
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.svg
+*.ico
+*.avif

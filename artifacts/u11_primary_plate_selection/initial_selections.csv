@@ -1,0 +1,4 @@
+status,reason,frame_index,candidate_id,candidate_count,distance_margin,video_id,group,manual_frame_index,manual_candidate_id,matches_manual,track_ok_frame_count
+selected,single_candidate,0,0,1,,a01_sn_f_01,A,0,0,True,87
+selected,single_candidate,0,0,1,,b01_sn_f_01,B,0,0,True,129
+selected,single_candidate,0,0,1,,c01_sn_f_01,C,0,0,True,99

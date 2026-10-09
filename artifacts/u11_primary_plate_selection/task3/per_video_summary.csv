@@ -1,0 +1,10 @@
+video_id,total_frame_count,plate_applicable_frame_count,track_ok_frame_count,plate_ok_rate,plate_non_ok_rate,longest_non_ok_gap_frames,longest_non_ok_gap_seconds,ground_truth_frame_count,candidate_correct_count,candidate_recall,track_detected_ground_truth_frame_count,track_correct_count,track_correct_rate,wrong_target_count,wrong_target_rate,mean_normalized_center_error,group
+a02_sn_f_01,124,124,124,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.01949201966478956,A
+a06_sn_h_01,99,99,99,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.027729296038865297,A
+a08_sn_f_01,70,70,70,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.013325405183132693,A
+b02_sn_f_01,95,95,95,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.026470973545087602,B
+b04_sn_f_01,108,108,108,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.0349693775033914,B
+b05_sn_f_01,82,0,0,,,,,0,0,,0,0,,0,,,B
+c03_sn_f_01,110,110,110,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.015246228786568148,C
+c04_sn_f_01,116,116,116,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.020334524731621655,C
+c05_sn_f_01,130,130,130,1.0,0.0,0.0,0.0,5,5,1.0,5,5,1.0,0,0.0,0.02781310668085889,C

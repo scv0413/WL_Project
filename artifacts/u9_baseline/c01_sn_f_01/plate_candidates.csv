@@ -1,0 +1,1 @@
+video_id,frame_index,timestamp_seconds,candidate_id,bbox_x1,bbox_y1,bbox_x2,bbox_y2,bbox_confidence,center_x_px,center_y_px,center_x_normalized,center_y_normalized

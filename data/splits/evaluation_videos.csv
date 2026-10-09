@@ -1,0 +1,6 @@
+video_id,person_id,group,split_role,completion,path,fps,frame_count,width,height,has_plate,visible_body_side,read_status
+a01_sn_f_01,a01,A,model_selection_pilot,f,data/raw/videos/a01_sn_f_01.mp4,24.003523,87,720,1280,yes,left,ok
+b01_sn_f_01,b01,B,model_selection_pilot,f,data/raw/videos/b01_sn_f_01.mp4,27.258918,129,1080,1920,yes,left,ok
+c01_sn_f_01,c01,C,model_selection_pilot,f,data/raw/videos/c01_sn_f_01.mp4,27.843329,99,1080,1920,yes,left,ok
+a02_sn_f_01,a02,A,rule_development,f,data/raw/videos/a02_sn_f_01.mp4,24.059882,124,720,1280,yes,left,ok
+a03_sn_f_01,a03,A,rule_blind,f,data/raw/videos/a03_sn_f_01.mp4,24.175412,122,720,1280,yes,left,ok

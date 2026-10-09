@@ -1,0 +1,7 @@
+video_id,group,method,proposal_frame,confirmed_frame,correction_frames,review_seconds,status,failure_reason
+a02_sn_f_01,A,assisted,3.0,16,13.0,4.327,complete,
+a08_sn_f_01,A,manual,,17,,177.493,complete,
+b04_sn_f_01,B,assisted,4.0,9,5.0,1.284,complete,
+b02_sn_f_01,B,manual,,7,,3.846,complete,
+c04_sn_f_01,C,assisted,16.0,16,0.0,1.441,complete,
+c03_sn_f_01,C,manual,,17,,1.928,complete,

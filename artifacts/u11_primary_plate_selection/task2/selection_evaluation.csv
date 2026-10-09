@@ -1,0 +1,10 @@
+status,reason,frame_index,candidate_id,candidate_count,distance_margin,video_id,group,track_ok_frame_count,target_status,target_frame_index,target_candidate_id,matches_manual,selection_outcome
+selected,single_candidate,0.0,0.0,1,,a02_sn_f_01,A,124.0,selected,0.0,0.0,True,correct
+selected,single_candidate,0.0,0.0,1,,a06_sn_h_01,A,99.0,selected,0.0,0.0,True,correct
+selected,single_candidate,0.0,0.0,1,,a08_sn_f_01,A,70.0,selected,0.0,0.0,True,correct
+selected,nearest_lifter,0.0,0.0,2,0.4853280165792764,b02_sn_f_01,B,95.0,selected,0.0,0.0,True,correct
+selected,single_candidate,0.0,0.0,1,,b04_sn_f_01,B,108.0,selected,0.0,0.0,True,correct
+not_available,no_candidates,,,0,,b05_sn_f_01,B,,no_plate,,,,correct_no_plate
+selected,single_candidate,0.0,0.0,1,,c03_sn_f_01,C,110.0,selected,0.0,0.0,True,correct
+selected,single_candidate,0.0,0.0,1,,c04_sn_f_01,C,116.0,selected,0.0,0.0,True,correct
+selected,single_candidate,0.0,0.0,1,,c05_sn_f_01,C,130.0,selected,0.0,0.0,True,correct

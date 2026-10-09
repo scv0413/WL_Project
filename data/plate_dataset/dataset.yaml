@@ -1,0 +1,5 @@
+path: /Users/gyeongsulim/Documents/WL_project/data/plate_dataset
+train: images
+val: images
+names:
+  0: plate

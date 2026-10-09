@@ -1,0 +1,5 @@
+path: /Users/gyeongsulim/Documents/WL_project/data/plate_dataset_v2
+train: images/train
+val: images/validation
+names:
+  0: plate

@@ -1,0 +1,100 @@
+video_id,frame_index,phase,recovery_complete,phase_status,na_reason
+a06_sn_h_01,0,Set-up,,ok,
+a06_sn_h_01,1,Set-up,,ok,
+a06_sn_h_01,2,Set-up,,ok,
+a06_sn_h_01,3,Set-up,,ok,
+a06_sn_h_01,4,Set-up,,ok,
+a06_sn_h_01,5,Set-up,,ok,
+a06_sn_h_01,6,Set-up,,ok,
+a06_sn_h_01,7,Set-up,,ok,
+a06_sn_h_01,8,Set-up,,ok,
+a06_sn_h_01,9,Set-up,,ok,
+a06_sn_h_01,10,Set-up,,ok,
+a06_sn_h_01,11,First Pull,,ok,
+a06_sn_h_01,12,First Pull,,ok,
+a06_sn_h_01,13,First Pull,,ok,
+a06_sn_h_01,14,First Pull,,ok,
+a06_sn_h_01,15,First Pull,,ok,
+a06_sn_h_01,16,First Pull,,ok,
+a06_sn_h_01,17,First Pull,,ok,
+a06_sn_h_01,18,First Pull,,ok,
+a06_sn_h_01,19,First Pull,,ok,
+a06_sn_h_01,20,Second Pull,,ok,
+a06_sn_h_01,21,Second Pull,,ok,
+a06_sn_h_01,22,Second Pull,,ok,
+a06_sn_h_01,23,Second Pull,,ok,
+a06_sn_h_01,24,Second Pull,,ok,
+a06_sn_h_01,25,Second Pull,,ok,
+a06_sn_h_01,26,Second Pull,,ok,
+a06_sn_h_01,27,Second Pull,,ok,
+a06_sn_h_01,28,Drop Under & Catch,,ok,
+a06_sn_h_01,29,Drop Under & Catch,,ok,
+a06_sn_h_01,30,Drop Under & Catch,,ok,
+a06_sn_h_01,31,Drop Under & Catch,,ok,
+a06_sn_h_01,32,Drop Under & Catch,,ok,
+a06_sn_h_01,33,Drop Under & Catch,,ok,
+a06_sn_h_01,34,Drop Under & Catch,,ok,
+a06_sn_h_01,35,Drop Under & Catch,,ok,
+a06_sn_h_01,36,Drop Under & Catch,,ok,
+a06_sn_h_01,37,Drop Under & Catch,,ok,
+a06_sn_h_01,38,Drop Under & Catch,,ok,
+a06_sn_h_01,39,Drop Under & Catch,,ok,
+a06_sn_h_01,40,Drop Under & Catch,,ok,
+a06_sn_h_01,41,Drop Under & Catch,,ok,
+a06_sn_h_01,42,Drop Under & Catch,,ok,
+a06_sn_h_01,43,Drop Under & Catch,,ok,
+a06_sn_h_01,44,Drop Under & Catch,,ok,
+a06_sn_h_01,45,Drop Under & Catch,,ok,
+a06_sn_h_01,46,N/A,,not_applicable,video_ended
+a06_sn_h_01,47,N/A,,not_applicable,video_ended
+a06_sn_h_01,48,N/A,,not_applicable,video_ended
+a06_sn_h_01,49,N/A,,not_applicable,video_ended
+a06_sn_h_01,50,N/A,,not_applicable,video_ended
+a06_sn_h_01,51,N/A,,not_applicable,video_ended
+a06_sn_h_01,52,N/A,,not_applicable,video_ended
+a06_sn_h_01,53,N/A,,not_applicable,video_ended
+a06_sn_h_01,54,N/A,,not_applicable,video_ended
+a06_sn_h_01,55,N/A,,not_applicable,video_ended
+a06_sn_h_01,56,N/A,,not_applicable,video_ended
+a06_sn_h_01,57,N/A,,not_applicable,video_ended
+a06_sn_h_01,58,N/A,,not_applicable,video_ended
+a06_sn_h_01,59,N/A,,not_applicable,video_ended
+a06_sn_h_01,60,N/A,,not_applicable,video_ended
+a06_sn_h_01,61,N/A,,not_applicable,video_ended
+a06_sn_h_01,62,N/A,,not_applicable,video_ended
+a06_sn_h_01,63,N/A,,not_applicable,video_ended
+a06_sn_h_01,64,N/A,,not_applicable,video_ended
+a06_sn_h_01,65,N/A,,not_applicable,video_ended
+a06_sn_h_01,66,N/A,,not_applicable,video_ended
+a06_sn_h_01,67,N/A,,not_applicable,video_ended
+a06_sn_h_01,68,N/A,,not_applicable,video_ended
+a06_sn_h_01,69,N/A,,not_applicable,video_ended
+a06_sn_h_01,70,N/A,,not_applicable,video_ended
+a06_sn_h_01,71,N/A,,not_applicable,video_ended
+a06_sn_h_01,72,N/A,,not_applicable,video_ended
+a06_sn_h_01,73,N/A,,not_applicable,video_ended
+a06_sn_h_01,74,N/A,,not_applicable,video_ended
+a06_sn_h_01,75,N/A,,not_applicable,video_ended
+a06_sn_h_01,76,N/A,,not_applicable,video_ended
+a06_sn_h_01,77,N/A,,not_applicable,video_ended
+a06_sn_h_01,78,N/A,,not_applicable,video_ended
+a06_sn_h_01,79,N/A,,not_applicable,video_ended
+a06_sn_h_01,80,N/A,,not_applicable,video_ended
+a06_sn_h_01,81,N/A,,not_applicable,video_ended
+a06_sn_h_01,82,N/A,,not_applicable,video_ended
+a06_sn_h_01,83,N/A,,not_applicable,video_ended
+a06_sn_h_01,84,N/A,,not_applicable,video_ended
+a06_sn_h_01,85,N/A,,not_applicable,video_ended
+a06_sn_h_01,86,N/A,,not_applicable,video_ended
+a06_sn_h_01,87,N/A,,not_applicable,video_ended
+a06_sn_h_01,88,N/A,,not_applicable,video_ended
+a06_sn_h_01,89,N/A,,not_applicable,video_ended
+a06_sn_h_01,90,N/A,,not_applicable,video_ended
+a06_sn_h_01,91,N/A,,not_applicable,video_ended
+a06_sn_h_01,92,N/A,,not_applicable,video_ended
+a06_sn_h_01,93,N/A,,not_applicable,video_ended
+a06_sn_h_01,94,N/A,,not_applicable,video_ended
+a06_sn_h_01,95,N/A,,not_applicable,video_ended
+a06_sn_h_01,96,N/A,,not_applicable,video_ended
+a06_sn_h_01,97,N/A,,not_applicable,video_ended
+a06_sn_h_01,98,N/A,,not_applicable,video_ended

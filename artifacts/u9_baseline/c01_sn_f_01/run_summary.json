@@ -1,0 +1,38 @@
+{
+  "video_id": "c01_sn_f_01",
+  "group": "C",
+  "frame_count": 99,
+  "device": {
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": ""
+  },
+  "pose": {
+    "status": "complete",
+    "model": "yolov8n-pose.pt",
+    "image_size": 640,
+    "confidence": 0.25,
+    "processed_frame_count": 99,
+    "candidate_row_count": 1683,
+    "initial_selection": {
+      "frame_index": 0,
+      "candidate_id": 0,
+      "bbox_confidence": 0.8226960301399231,
+      "status": "auto_selected",
+      "reason": "largest_bbox_and_horizontal_center"
+    },
+    "elapsed_seconds": 3.7170729999998002
+  },
+  "plate": {
+    "status": "complete",
+    "model": "artifacts/b00_sn_f_01/plate_smoke/weights/best.pt",
+    "weights_sha256": "5de4583278cb61411f0a129a4c76c30c4c912b3bbb29d73494e8356459153df7",
+    "image_size": 320,
+    "confidence": 0.25,
+    "processed_frame_count": 99,
+    "candidate_row_count": 0,
+    "elapsed_seconds": 1.879909833005513,
+    "track_status": "not_available",
+    "track_reason": "primary_plate_not_detected"
+  }
+}

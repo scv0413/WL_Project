@@ -1,0 +1,4 @@
+group,video_id,video_count,total_frame_count,plate_applicable_frame_count,track_ok_frame_count,ground_truth_frame_count,candidate_correct_count,track_detected_ground_truth_frame_count,track_correct_count,wrong_target_count,plate_ok_rate,plate_non_ok_rate,longest_non_ok_gap_frames,longest_non_ok_gap_seconds,candidate_recall,track_correct_rate,wrong_target_rate,mean_normalized_center_error
+A,ALL,3,293,293,293,15,15,15,15,0,1.0,0.0,0,0.0,1.0,1.0,0.0,0.020182240295595847
+B,ALL,3,285,203,203,10,10,10,10,0,1.0,0.0,0,0.0,1.0,1.0,0.0,0.0307201755242395
+C,ALL,3,356,356,356,15,15,15,15,0,1.0,0.0,0,0.0,1.0,1.0,0.0,0.02113128673301623

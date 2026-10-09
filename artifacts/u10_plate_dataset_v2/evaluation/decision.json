@@ -1,0 +1,27 @@
+{
+  "decision": "adopt",
+  "minimum_correct_gain": 3,
+  "baseline_candidate_correct_count": 12,
+  "candidate_candidate_correct_count": 30,
+  "correct_gain": 18,
+  "baseline_track_correct_count": 12,
+  "candidate_track_correct_count": 30,
+  "candidate_wrong_target_count": 0,
+  "baseline_group_counts": {
+    "A": 4,
+    "B": 6,
+    "C": 2
+  },
+  "candidate_group_counts": {
+    "A": 10,
+    "B": 10,
+    "C": 10
+  },
+  "no_large_group_regression": true,
+  "track_not_regressed": true,
+  "coverage_or_gap_improved": true,
+  "baseline_plate_ok_rate": 0.3777777777777777,
+  "candidate_plate_ok_rate": 1.0,
+  "baseline_longest_gap": 18,
+  "candidate_longest_gap": 0
+}

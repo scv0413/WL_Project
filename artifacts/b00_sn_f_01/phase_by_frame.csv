@@ -1,0 +1,255 @@
+video_id,frame_index,phase,recovery_complete
+b00_sn_f_01,0,First Pull,False
+b00_sn_f_01,1,First Pull,False
+b00_sn_f_01,2,First Pull,False
+b00_sn_f_01,3,First Pull,False
+b00_sn_f_01,4,First Pull,False
+b00_sn_f_01,5,First Pull,False
+b00_sn_f_01,6,First Pull,False
+b00_sn_f_01,7,First Pull,False
+b00_sn_f_01,8,First Pull,False
+b00_sn_f_01,9,First Pull,False
+b00_sn_f_01,10,First Pull,False
+b00_sn_f_01,11,First Pull,False
+b00_sn_f_01,12,First Pull,False
+b00_sn_f_01,13,First Pull,False
+b00_sn_f_01,14,First Pull,False
+b00_sn_f_01,15,First Pull,False
+b00_sn_f_01,16,First Pull,False
+b00_sn_f_01,17,First Pull,False
+b00_sn_f_01,18,First Pull,False
+b00_sn_f_01,19,First Pull,False
+b00_sn_f_01,20,First Pull,False
+b00_sn_f_01,21,First Pull,False
+b00_sn_f_01,22,First Pull,False
+b00_sn_f_01,23,First Pull,False
+b00_sn_f_01,24,First Pull,False
+b00_sn_f_01,25,First Pull,False
+b00_sn_f_01,26,First Pull,False
+b00_sn_f_01,27,First Pull,False
+b00_sn_f_01,28,First Pull,False
+b00_sn_f_01,29,First Pull,False
+b00_sn_f_01,30,First Pull,False
+b00_sn_f_01,31,First Pull,False
+b00_sn_f_01,32,First Pull,False
+b00_sn_f_01,33,First Pull,False
+b00_sn_f_01,34,First Pull,False
+b00_sn_f_01,35,First Pull,False
+b00_sn_f_01,36,First Pull,False
+b00_sn_f_01,37,First Pull,False
+b00_sn_f_01,38,First Pull,False
+b00_sn_f_01,39,First Pull,False
+b00_sn_f_01,40,First Pull,False
+b00_sn_f_01,41,First Pull,False
+b00_sn_f_01,42,First Pull,False
+b00_sn_f_01,43,First Pull,False
+b00_sn_f_01,44,First Pull,False
+b00_sn_f_01,45,First Pull,False
+b00_sn_f_01,46,First Pull,False
+b00_sn_f_01,47,First Pull,False
+b00_sn_f_01,48,First Pull,False
+b00_sn_f_01,49,First Pull,False
+b00_sn_f_01,50,First Pull,False
+b00_sn_f_01,51,First Pull,False
+b00_sn_f_01,52,First Pull,False
+b00_sn_f_01,53,First Pull,False
+b00_sn_f_01,54,First Pull,False
+b00_sn_f_01,55,First Pull,False
+b00_sn_f_01,56,First Pull,False
+b00_sn_f_01,57,First Pull,False
+b00_sn_f_01,58,First Pull,False
+b00_sn_f_01,59,First Pull,False
+b00_sn_f_01,60,First Pull,False
+b00_sn_f_01,61,First Pull,False
+b00_sn_f_01,62,First Pull,False
+b00_sn_f_01,63,First Pull,False
+b00_sn_f_01,64,First Pull,False
+b00_sn_f_01,65,Second Pull,False
+b00_sn_f_01,66,Second Pull,False
+b00_sn_f_01,67,Second Pull,False
+b00_sn_f_01,68,Second Pull,False
+b00_sn_f_01,69,Second Pull,False
+b00_sn_f_01,70,Second Pull,False
+b00_sn_f_01,71,Second Pull,False
+b00_sn_f_01,72,Second Pull,False
+b00_sn_f_01,73,Second Pull,False
+b00_sn_f_01,74,Second Pull,False
+b00_sn_f_01,75,Second Pull,False
+b00_sn_f_01,76,Second Pull,False
+b00_sn_f_01,77,Second Pull,False
+b00_sn_f_01,78,Second Pull,False
+b00_sn_f_01,79,Second Pull,False
+b00_sn_f_01,80,Second Pull,False
+b00_sn_f_01,81,Second Pull,False
+b00_sn_f_01,82,Second Pull,False
+b00_sn_f_01,83,Drop Under & Catch,False
+b00_sn_f_01,84,Drop Under & Catch,False
+b00_sn_f_01,85,Drop Under & Catch,False
+b00_sn_f_01,86,Drop Under & Catch,False
+b00_sn_f_01,87,Drop Under & Catch,False
+b00_sn_f_01,88,Drop Under & Catch,False
+b00_sn_f_01,89,Drop Under & Catch,False
+b00_sn_f_01,90,Drop Under & Catch,False
+b00_sn_f_01,91,Drop Under & Catch,False
+b00_sn_f_01,92,Drop Under & Catch,False
+b00_sn_f_01,93,Drop Under & Catch,False
+b00_sn_f_01,94,Drop Under & Catch,False
+b00_sn_f_01,95,Drop Under & Catch,False
+b00_sn_f_01,96,Drop Under & Catch,False
+b00_sn_f_01,97,Drop Under & Catch,False
+b00_sn_f_01,98,Drop Under & Catch,False
+b00_sn_f_01,99,Drop Under & Catch,False
+b00_sn_f_01,100,Drop Under & Catch,False
+b00_sn_f_01,101,Drop Under & Catch,False
+b00_sn_f_01,102,Drop Under & Catch,False
+b00_sn_f_01,103,Drop Under & Catch,False
+b00_sn_f_01,104,Drop Under & Catch,False
+b00_sn_f_01,105,Drop Under & Catch,False
+b00_sn_f_01,106,Drop Under & Catch,False
+b00_sn_f_01,107,Drop Under & Catch,False
+b00_sn_f_01,108,Drop Under & Catch,False
+b00_sn_f_01,109,Drop Under & Catch,False
+b00_sn_f_01,110,Drop Under & Catch,False
+b00_sn_f_01,111,Drop Under & Catch,False
+b00_sn_f_01,112,Drop Under & Catch,False
+b00_sn_f_01,113,Drop Under & Catch,False
+b00_sn_f_01,114,Drop Under & Catch,False
+b00_sn_f_01,115,Drop Under & Catch,False
+b00_sn_f_01,116,Drop Under & Catch,False
+b00_sn_f_01,117,Drop Under & Catch,False
+b00_sn_f_01,118,Drop Under & Catch,False
+b00_sn_f_01,119,Drop Under & Catch,False
+b00_sn_f_01,120,Drop Under & Catch,False
+b00_sn_f_01,121,Drop Under & Catch,False
+b00_sn_f_01,122,Drop Under & Catch,False
+b00_sn_f_01,123,Drop Under & Catch,False
+b00_sn_f_01,124,Drop Under & Catch,False
+b00_sn_f_01,125,Drop Under & Catch,False
+b00_sn_f_01,126,Drop Under & Catch,False
+b00_sn_f_01,127,Drop Under & Catch,False
+b00_sn_f_01,128,Drop Under & Catch,False
+b00_sn_f_01,129,Drop Under & Catch,False
+b00_sn_f_01,130,Drop Under & Catch,False
+b00_sn_f_01,131,Drop Under & Catch,False
+b00_sn_f_01,132,Drop Under & Catch,False
+b00_sn_f_01,133,Drop Under & Catch,False
+b00_sn_f_01,134,Drop Under & Catch,False
+b00_sn_f_01,135,Drop Under & Catch,False
+b00_sn_f_01,136,Drop Under & Catch,False
+b00_sn_f_01,137,Drop Under & Catch,False
+b00_sn_f_01,138,Drop Under & Catch,False
+b00_sn_f_01,139,Drop Under & Catch,False
+b00_sn_f_01,140,Drop Under & Catch,False
+b00_sn_f_01,141,Drop Under & Catch,False
+b00_sn_f_01,142,Drop Under & Catch,False
+b00_sn_f_01,143,Drop Under & Catch,False
+b00_sn_f_01,144,Drop Under & Catch,False
+b00_sn_f_01,145,Drop Under & Catch,False
+b00_sn_f_01,146,Drop Under & Catch,False
+b00_sn_f_01,147,Drop Under & Catch,False
+b00_sn_f_01,148,Drop Under & Catch,False
+b00_sn_f_01,149,Drop Under & Catch,False
+b00_sn_f_01,150,Drop Under & Catch,False
+b00_sn_f_01,151,Drop Under & Catch,False
+b00_sn_f_01,152,Drop Under & Catch,False
+b00_sn_f_01,153,Drop Under & Catch,False
+b00_sn_f_01,154,Drop Under & Catch,False
+b00_sn_f_01,155,Drop Under & Catch,False
+b00_sn_f_01,156,Recovery,False
+b00_sn_f_01,157,Recovery,False
+b00_sn_f_01,158,Recovery,False
+b00_sn_f_01,159,Recovery,False
+b00_sn_f_01,160,Recovery,False
+b00_sn_f_01,161,Recovery,False
+b00_sn_f_01,162,Recovery,False
+b00_sn_f_01,163,Recovery,False
+b00_sn_f_01,164,Recovery,False
+b00_sn_f_01,165,Recovery,False
+b00_sn_f_01,166,Recovery,False
+b00_sn_f_01,167,Recovery,False
+b00_sn_f_01,168,Recovery,False
+b00_sn_f_01,169,Recovery,False
+b00_sn_f_01,170,Recovery,False
+b00_sn_f_01,171,Recovery,False
+b00_sn_f_01,172,Recovery,False
+b00_sn_f_01,173,Recovery,False
+b00_sn_f_01,174,Recovery,False
+b00_sn_f_01,175,Recovery,False
+b00_sn_f_01,176,Recovery,False
+b00_sn_f_01,177,Recovery,False
+b00_sn_f_01,178,Recovery,False
+b00_sn_f_01,179,Recovery,False
+b00_sn_f_01,180,Recovery,False
+b00_sn_f_01,181,Recovery,False
+b00_sn_f_01,182,Recovery,False
+b00_sn_f_01,183,Recovery,False
+b00_sn_f_01,184,Recovery,False
+b00_sn_f_01,185,Recovery,False
+b00_sn_f_01,186,Recovery,False
+b00_sn_f_01,187,Recovery,False
+b00_sn_f_01,188,Recovery,False
+b00_sn_f_01,189,Recovery,False
+b00_sn_f_01,190,Recovery,False
+b00_sn_f_01,191,Recovery,False
+b00_sn_f_01,192,Recovery,False
+b00_sn_f_01,193,Recovery,False
+b00_sn_f_01,194,Recovery,False
+b00_sn_f_01,195,Recovery,False
+b00_sn_f_01,196,Recovery,False
+b00_sn_f_01,197,Recovery,False
+b00_sn_f_01,198,Recovery,False
+b00_sn_f_01,199,Recovery,False
+b00_sn_f_01,200,Recovery,False
+b00_sn_f_01,201,Recovery,False
+b00_sn_f_01,202,Recovery,False
+b00_sn_f_01,203,Recovery,False
+b00_sn_f_01,204,Recovery,False
+b00_sn_f_01,205,Recovery,False
+b00_sn_f_01,206,Recovery,False
+b00_sn_f_01,207,Recovery,False
+b00_sn_f_01,208,Recovery,False
+b00_sn_f_01,209,Recovery,False
+b00_sn_f_01,210,Recovery,False
+b00_sn_f_01,211,Recovery,False
+b00_sn_f_01,212,Recovery,False
+b00_sn_f_01,213,Recovery,False
+b00_sn_f_01,214,Recovery,False
+b00_sn_f_01,215,Recovery,False
+b00_sn_f_01,216,Recovery,False
+b00_sn_f_01,217,Recovery,False
+b00_sn_f_01,218,Recovery,False
+b00_sn_f_01,219,Recovery,False
+b00_sn_f_01,220,Recovery,False
+b00_sn_f_01,221,Recovery,False
+b00_sn_f_01,222,Recovery,False
+b00_sn_f_01,223,Recovery,False
+b00_sn_f_01,224,Recovery,False
+b00_sn_f_01,225,Recovery,True
+b00_sn_f_01,226,Recovery,True
+b00_sn_f_01,227,Recovery,True
+b00_sn_f_01,228,Recovery,True
+b00_sn_f_01,229,Recovery,True
+b00_sn_f_01,230,Recovery,True
+b00_sn_f_01,231,Recovery,True
+b00_sn_f_01,232,Recovery,True
+b00_sn_f_01,233,Recovery,True
+b00_sn_f_01,234,Recovery,True
+b00_sn_f_01,235,Recovery,True
+b00_sn_f_01,236,Recovery,True
+b00_sn_f_01,237,Recovery,True
+b00_sn_f_01,238,Recovery,True
+b00_sn_f_01,239,Recovery,True
+b00_sn_f_01,240,Recovery,True
+b00_sn_f_01,241,Recovery,True
+b00_sn_f_01,242,Recovery,True
+b00_sn_f_01,243,Recovery,True
+b00_sn_f_01,244,Recovery,True
+b00_sn_f_01,245,Recovery,True
+b00_sn_f_01,246,Recovery,True
+b00_sn_f_01,247,Recovery,True
+b00_sn_f_01,248,Recovery,True
+b00_sn_f_01,249,Recovery,True
+b00_sn_f_01,250,Recovery,True
+b00_sn_f_01,251,Recovery,True
+b00_sn_f_01,252,Recovery,True
+b00_sn_f_01,253,Recovery,True

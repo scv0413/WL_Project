@@ -1,0 +1,23 @@
+{
+  "video_id": "c01_sn_f_01",
+  "group": "C",
+  "device": {
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": ""
+  },
+  "plate": {
+    "status": "complete",
+    "track_status": "complete",
+    "model": "artifacts/u10_plate_dataset_v2/training/weights/best.pt",
+    "weights_sha256": "a116d3ae65ef57b7c8a33493b26e59305c0bdbb492527aef53211b9810475223",
+    "image_size": 320,
+    "confidence": 0.1,
+    "processed_frame_count": 99,
+    "candidate_row_count": 99,
+    "elapsed_seconds": 4.10228829200787,
+    "initial_frame_index": 0,
+    "initial_candidate_id": 0,
+    "tracked_frame_count": 99
+  }
+}

@@ -1,0 +1,4 @@
+group,video_count,selection_evaluable_count,selected_count,correct_selection_count,wrong_auto_selection_count,confirmation_required_count,not_available_count,target_missing_count,no_plate_count,false_positive_count,multi_candidate_video_count,auto_selection_accuracy,manual_review_rate
+A,3,3,3,3,0,0,0,0,0,0,0,1.0,0.0
+B,3,2,2,2,0,0,1,0,1,0,1,1.0,0.3333333333333333
+C,3,3,3,3,0,0,0,0,0,0,0,1.0,0.0

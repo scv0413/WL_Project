@@ -1,0 +1,41 @@
+{
+  "video_id": "b01_sn_f_01",
+  "group": "B",
+  "frame_count": 129,
+  "device": {
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": ""
+  },
+  "pose": {
+    "status": "complete",
+    "model": "yolov8n-pose.pt",
+    "image_size": 640,
+    "confidence": 0.25,
+    "processed_frame_count": 129,
+    "candidate_row_count": 2227,
+    "initial_selection": {
+      "frame_index": 0,
+      "candidate_id": 0,
+      "bbox_confidence": 0.8002112507820129,
+      "status": "auto_selected",
+      "reason": "largest_bbox_and_horizontal_center"
+    },
+    "elapsed_seconds": 4.634521749998385
+  },
+  "plate": {
+    "status": "complete",
+    "model": "artifacts/b00_sn_f_01/plate_smoke/weights/best.pt",
+    "weights_sha256": "5de4583278cb61411f0a129a4c76c30c4c912b3bbb29d73494e8356459153df7",
+    "image_size": 320,
+    "confidence": 0.1,
+    "processed_frame_count": 129,
+    "candidate_row_count": 63,
+    "elapsed_seconds": 2.5913501249888213,
+    "track_status": "complete",
+    "track_reason": "",
+    "initial_frame_index": 12,
+    "initial_candidate_id": 0,
+    "tracked_frame_count": 63
+  }
+}

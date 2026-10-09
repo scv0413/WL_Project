@@ -1,0 +1,6 @@
+video_id,event_name,frame_index,annotator,notes,na_reason
+c01_sn_f_01,bar_off_floor,6,coach_01,,
+c01_sn_f_01,knee_pass,20,coach_01,,
+c01_sn_f_01,max_extension,35,coach_01,,
+c01_sn_f_01,catch_stable,65,coach_01,,
+c01_sn_f_01,recovery_stable,98,coach_01,,

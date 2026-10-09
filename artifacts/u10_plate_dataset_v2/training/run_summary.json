@@ -1,0 +1,53 @@
+{
+  "status": "complete",
+  "dataset_yaml": "/Users/gyeongsulim/Documents/WL_project/data/plate_dataset_v2/dataset.yaml",
+  "dataset_split": {
+    "train_video_ids": [
+      "a04_sn_f_01",
+      "a05_sn_f_01",
+      "b03_sn_f_01",
+      "c02_sn_f_01"
+    ],
+    "validation_video_ids": [
+      "a07_sn_f_01",
+      "c08_sn_f_01"
+    ],
+    "train_person_ids": [
+      "a04",
+      "a05",
+      "b03",
+      "c02"
+    ],
+    "validation_person_ids": [
+      "a07",
+      "c08"
+    ],
+    "person_overlap": []
+  },
+  "label_counts": {
+    "train_images": 110,
+    "train_labels": 110,
+    "validation_images": 40,
+    "validation_labels": 40
+  },
+  "model": "yolov8n.pt",
+  "ultralytics_version": "8.4.115",
+  "weights_path": "/Users/gyeongsulim/Documents/WL_project/artifacts/u10_plate_dataset_v2/training/weights/best.pt",
+  "weights_sha256": "a116d3ae65ef57b7c8a33493b26e59305c0bdbb492527aef53211b9810475223",
+  "model_size_bytes": 6199018,
+  "epochs": 10,
+  "batch": 4,
+  "image_size": 320,
+  "seed": 0,
+  "requested_device": "mps",
+  "actual_device": "mps",
+  "device_fallback_reason": "",
+  "training_seconds": 76.02224187500542,
+  "peak_rss_bytes": 760233984,
+  "peak_rss_scope": "current macOS Python process accumulated peak",
+  "safe_load": {
+    "environment_value": "True",
+    "supported": true,
+    "active": true
+  }
+}

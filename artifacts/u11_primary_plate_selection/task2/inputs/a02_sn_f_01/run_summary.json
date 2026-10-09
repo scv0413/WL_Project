@@ -1,0 +1,36 @@
+{
+  "video_id": "a02_sn_f_01",
+  "group": "A",
+  "frame_count": 124,
+  "device": {
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": ""
+  },
+  "pose": {
+    "status": "complete",
+    "model": "yolov8n-pose.pt",
+    "image_size": 640,
+    "confidence": 0.25,
+    "keypoint_confidence": 0.5,
+    "processed_frame_count": 124,
+    "initial_selection": {
+      "frame_index": 0,
+      "candidate_id": 1,
+      "bbox_confidence": 0.8407410979270935,
+      "status": "auto_selected",
+      "reason": "largest_bbox_and_horizontal_center"
+    },
+    "elapsed_seconds": 4.92776083399076
+  },
+  "plate": {
+    "status": "complete",
+    "model": "/Users/gyeongsulim/Documents/WL_project/artifacts/u10_plate_dataset_v2/training/weights/best.pt",
+    "weights_sha256": "a116d3ae65ef57b7c8a33493b26e59305c0bdbb492527aef53211b9810475223",
+    "image_size": 320,
+    "confidence": 0.1,
+    "processed_frame_count": 124,
+    "candidate_row_count": 124,
+    "elapsed_seconds": 2.3584842910058796
+  }
+}

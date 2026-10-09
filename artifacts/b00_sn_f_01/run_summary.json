@@ -1,0 +1,70 @@
+{
+  "pose": {
+    "status": "complete",
+    "video_id": "b00_sn_f_01",
+    "frame_count": 254,
+    "processed_frame_count": 254,
+    "model": "yolov8n-pose.pt",
+    "image_size": 640,
+    "bbox_confidence_threshold": 0.25,
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": "",
+    "safe_load": {
+      "environment_value": "True",
+      "supported": true,
+      "active": true
+    },
+    "elapsed_seconds": 9.518
+  },
+  "pose_selection": {
+    "status": "complete",
+    "reason": "largest_bbox_and_horizontal_center",
+    "selection_method": "automatic",
+    "initial_frame_index": 0,
+    "initial_candidate_id": 0,
+    "keypoint_confidence_threshold": 0.5,
+    "body_side": "left",
+    "angle_status": "complete"
+  },
+  "plate": {
+    "status": "track_complete",
+    "actual_device": "mps",
+    "weight_path": "artifacts/b00_sn_f_01/plate_smoke/weights/best.pt",
+    "training_seconds": 53.063921333057806,
+    "inference_seconds": 6.676531041972339,
+    "processed_frame_count": 254,
+    "candidate_count": 97,
+    "background_plate_misselection_frames": [],
+    "track_path": "artifacts/b00_sn_f_01/plate_track.csv",
+    "longest_consecutive_non_ok_gap_frames": 66
+  },
+  "fusion": {
+    "status": "ok",
+    "frame_count": 254,
+    "pose_na_frames": 0,
+    "pose_partial_frames": 254,
+    "angle_na_frames": 0,
+    "plate_missing_or_confirmation_required_frames": 157,
+    "worst_confidence": 0.2508153617382049,
+    "longest_plate_missing_gap_frames": 66,
+    "visualization_status": {
+      "angle_plot": {
+        "status": "ok",
+        "reason": ""
+      },
+      "bar_path_plot": {
+        "status": "ok",
+        "reason": ""
+      },
+      "phase_storyboard": {
+        "status": "ok",
+        "reason": ""
+      },
+      "overlay": {
+        "status": "ok",
+        "reason": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+video_id,person_id,dataset_role,selection_reason,group,path,fps,frame_count,width,height,completion,has_plate
+a04_sn_f_01,a04,train,큰 초록 원판과 주변 기구가 함께 있는 복잡한 배경,A,data/raw/videos/a04_sn_f_01.mp4,24.072753,125,720,1280,f,yes
+a05_sn_f_01,a05,train,카메라에 가까운 원판과 다른 촬영 거리,A,data/raw/videos/a05_sn_f_01.mp4,24.217962,88,404,720,f,yes
+b03_sn_f_01,b03,train,검은 원판과 밝은 벽 배경,B,data/raw/videos/b03_sn_f_01.mp4,27.681998,131,1080,1920,f,yes
+c02_sn_f_01,c02,train,다른 체형과 검은 원판 크기,C,data/raw/videos/c02_sn_f_01.mp4,28.063679,110,1080,1920,f,yes
+a07_sn_f_01,a07,validation,검증용 초록 원판과 후방 사람·기구,A,data/raw/videos/a07_sn_f_01.mp4,24.308153,63,406,720,f,yes
+c08_sn_f_01,c08,validation,검증용 새로운 사람과 카메라 거리,C,data/raw/videos/c08_sn_f_01.mp4,29.737747,114,1080,1920,f,yes
